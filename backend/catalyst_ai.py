@@ -262,7 +262,11 @@ async def generate_catalyst_response(
     actual_tokens = estimate_tokens(response_text)
     await rate_limiter.record_usage(current_model_used, actual_tokens)
 
-    return _parse_model_response(response, executed_calls)
+    return _parse_model_response(
+        response,
+        executed_calls,
+        model_used=current_model_used,
+    )
 
 
 async def update_ltm_memory(
@@ -504,6 +508,8 @@ def _execute_tool(
 def _parse_model_response(
     response: Any,
     executed_calls: List[Dict[str, Any]],
+    *,
+    model_used: Optional[str] = None,
 ) -> Dict[str, Any]:  # pragma: no cover - structure from vendor
     response_text = ""
 
@@ -523,4 +529,5 @@ def _parse_model_response(
         "memory_updated": bool(executed_calls),
         "function_calls": executed_calls,
         "thinking": json.dumps(executed_calls) if SHOW_THINKING else None,
+        "model": model_used,
     }

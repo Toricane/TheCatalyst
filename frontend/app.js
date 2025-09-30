@@ -44,15 +44,28 @@ const goalTimeline = document.getElementById("goalTimeline");
 let activeSession = "general";
 let isSending = false;
 
-function appendMessage(role, text) {
+function appendMessage(role, text, options = {}) {
     const article = document.createElement("article");
     article.className = `message ${role}`;
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "message-wrapper";
+
+    const { model } = options;
+
+    if (model) {
+        const meta = document.createElement("div");
+        meta.className = "message-meta";
+        meta.textContent = model;
+        wrapper.appendChild(meta);
+    }
 
     const body = document.createElement("div");
     body.className = "message-body";
     body.innerHTML = renderMarkdown(text);
 
-    article.appendChild(body);
+    wrapper.appendChild(body);
+    article.appendChild(wrapper);
     chatFeed.appendChild(article);
     chatFeed.scrollTo({ top: chatFeed.scrollHeight, behavior: "smooth" });
 }
@@ -127,7 +140,9 @@ async function sendMessage() {
             body: JSON.stringify(payload),
         });
 
-        appendMessage("catalyst", data.response);
+        appendMessage("catalyst", data.response, {
+            model: data.model,
+        });
 
         if (data.memory_updated) {
             await refreshGoalDisplay();
@@ -157,7 +172,9 @@ async function initializeCatalyst() {
             body: JSON.stringify({ description, metric, timeline, rank: 1 }),
         });
 
-        appendMessage("catalyst", data.response);
+        appendMessage("catalyst", data.response, {
+            model: data.model,
+        });
         initModal.close();
         await refreshGoalDisplay();
     } catch (error) {
@@ -255,7 +272,9 @@ async function generateInitialGreeting() {
         const data = await fetchJSON(`${API_BASE_URL}/initial-greeting`, {
             method: "POST",
         });
-        appendMessage("catalyst", data.response);
+        appendMessage("catalyst", data.response, {
+            model: data.model,
+        });
     } catch (error) {
         appendMessage("catalyst", `<strong>System</strong>: ${error.message}`);
     } finally {

@@ -163,6 +163,7 @@ async def initialize_catalyst(
         memory_updated=True,
         session_type=SessionType.INITIALIZATION.value,
         thinking=response.get("thinking") if SHOW_THINKING else None,
+        model=response.get("model"),
     )
 
 
@@ -362,6 +363,7 @@ Current context:
         memory_updated=False,
         session_type=session_type.value,
         thinking=response.get("thinking") if SHOW_THINKING else None,
+        model=response.get("model"),
     )
 
 
@@ -408,6 +410,7 @@ async def chat_with_catalyst(
                 "catalyst": response["response"],
                 "timestamp": utc_now().isoformat(),
                 "function_calls": response.get("function_calls", []),
+                "model": response.get("model"),
             }
         ),
         thinking_log=response.get("thinking") or "",
@@ -458,6 +461,7 @@ async def chat_with_catalyst(
         memory_updated=memory_updated,
         session_type=actual_session.value,
         thinking=response.get("thinking") if SHOW_THINKING else None,
+        model=response.get("model"),
     )
 
 

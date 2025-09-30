@@ -26,6 +26,7 @@ class ChatResponse(BaseModel):
     memory_updated: bool = False
     session_type: str
     thinking: Optional[str] = None
+    model: Optional[str] = None
 
 
 class Goal(BaseModel):
