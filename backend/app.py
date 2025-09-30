@@ -350,8 +350,6 @@ Current context:
 ---
 """
 
-    print("Greeting prompt:", greeting_prompt)
-
     response = await generate_catalyst_response(
         greeting_prompt,
         session_type,
