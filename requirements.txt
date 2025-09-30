@@ -1,0 +1,14 @@
+# requirements.txt
+fastapi
+uvicorn[standard]
+python-dotenv
+google-genai
+pydantic
+python-multipart
+aiofiles
+SQLAlchemy
+
+# To install and run:
+# 1. pip install -r requirements.txt
+# 2. python app.py
+# 3. Open frontend/index.html in browser (or serve it with any local server)

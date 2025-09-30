@@ -1,0 +1,519 @@
+:root {
+    color-scheme: dark;
+    font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: radial-gradient(circle at top right, rgba(59, 130, 246, 0.15), transparent 55%),
+        radial-gradient(circle at bottom left, rgba(255, 107, 53, 0.15), transparent 55%),
+        #0f172a;
+    color: #e2e8f0;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+}
+
+body {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: clamp(1.5rem, 3vw, 3rem);
+}
+
+.app-shell {
+    display: grid;
+    gap: 1.5rem;
+    width: min(960px, 100%);
+}
+
+.header {
+    background: rgba(15, 23, 42, 0.8);
+    backdrop-filter: blur(16px);
+    padding: clamp(1.5rem, 2vw, 2rem);
+    border-radius: 1.25rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 18px 45px rgba(15, 23, 42, 0.45);
+    display: grid;
+    gap: 0.75rem;
+    text-align: center;
+}
+
+.header h1 {
+    font-size: clamp(2rem, 5vw, 2.75rem);
+    letter-spacing: -0.03em;
+}
+
+.subtitle {
+    color: #94a3b8;
+    font-size: clamp(1rem, 2.5vw, 1.1rem);
+}
+
+.goal-display {
+    border-radius: 0.9rem;
+    padding: 0.85rem 1.15rem;
+    border: 1px solid rgba(255, 107, 53, 0.35);
+    background: rgba(255, 107, 53, 0.12);
+    font-weight: 500;
+    color: #f8fafc;
+}
+
+.chat-shell {
+    position: relative;
+    background: rgba(15, 23, 42, 0.7);
+    border-radius: 1.25rem;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    overflow: hidden;
+}
+
+.chat-feed {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    max-height: clamp(360px, 55vh, 560px);
+    overflow-y: auto;
+    padding: clamp(1.25rem, 2.5vw, 2rem);
+    scroll-behavior: smooth;
+}
+
+.message {
+    display: flex;
+    justify-content: flex-start;
+}
+
+.message.user {
+    justify-content: flex-end;
+}
+
+.message-body {
+    max-width: min(620px, 85%);
+    padding: 1.1rem 1.35rem;
+    border-radius: 1.1rem;
+    line-height: 1.6;
+    font-size: 1rem;
+    background: rgba(30, 41, 59, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.25);
+}
+
+.message-body p+p,
+.message-body ul,
+.message-body ol,
+.message-body pre,
+.message-body blockquote {
+    margin-top: 0.75rem;
+}
+
+.message-body ul,
+.message-body ol {
+    padding-left: 1.4rem;
+}
+
+.message-body li+li {
+    margin-top: 0.35rem;
+}
+
+.message-body code {
+    font-family: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco,
+        Consolas, "Liberation Mono", "Courier New", monospace;
+    background: rgba(15, 23, 42, 0.6);
+    border-radius: 0.4rem;
+    padding: 0.2rem 0.4rem;
+    font-size: 0.95em;
+}
+
+.message-body pre {
+    background: rgba(2, 6, 23, 0.6);
+    border-radius: 0.9rem;
+    padding: 0.95rem 1.05rem;
+    overflow-x: auto;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.message-body pre code {
+    background: transparent;
+    padding: 0;
+}
+
+.message-body blockquote {
+    border-left: 3px solid rgba(148, 163, 184, 0.6);
+    padding-left: 0.85rem;
+    color: #cbd5f5;
+    background: rgba(148, 163, 184, 0.1);
+    border-radius: 0.75rem;
+}
+
+.message-body a {
+    color: #38bdf8;
+    text-decoration: underline;
+    text-decoration-thickness: 0.1em;
+}
+
+.message.user .message-body {
+    background: linear-gradient(135deg, #ff6b35, #f59e0b);
+    color: #0f172a;
+    border-color: rgba(255, 255, 255, 0.18);
+}
+
+.message.user .message-body code {
+    background: rgba(15, 23, 42, 0.12);
+}
+
+.message.user .message-body pre {
+    background: rgba(15, 23, 42, 0.18);
+    border-color: rgba(15, 23, 42, 0.18);
+}
+
+.message.user .message-body blockquote {
+    color: #1e293b;
+    background: rgba(15, 23, 42, 0.12);
+    border-color: rgba(15, 23, 42, 0.4);
+}
+
+.message.user .message-body a {
+    color: #1d4ed8;
+}
+
+.typing-indicator {
+    display: none;
+    gap: 0.35rem;
+    padding: 0 1.75rem 1.5rem;
+}
+
+.typing-indicator span {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: #f59e0b;
+    animation: bounce 1.1s ease-in-out infinite;
+}
+
+.typing-indicator span:nth-child(2) {
+    animation-delay: 0.12s;
+}
+
+.typing-indicator span:nth-child(3) {
+    animation-delay: 0.24s;
+}
+
+@keyframes bounce {
+    0%, 80%, 100% {
+        transform: scale(0.6);
+        opacity: 0.45;
+    }
+
+    40% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+.typing-indicator.active {
+    display: flex;
+}
+
+.input-panel {
+    display: grid;
+    gap: 1rem;
+    background: rgba(15, 23, 42, 0.85);
+    border-radius: 1.25rem;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    padding: clamp(1.25rem, 2.5vw, 1.75rem);
+}
+
+.input-container {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.input-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 0.25rem;
+}
+
+.toolbar-btn {
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: #e2e8f0;
+    padding: 0.5rem 0.9rem;
+    border-radius: 0.75rem;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.toolbar-btn:hover {
+    background: rgba(30, 41, 59, 1);
+    transform: translateY(-1px);
+}
+
+.input-info {
+    display: flex;
+    align-items: center;
+}
+
+.shortcut-hint {
+    font-size: 0.8rem;
+    color: #94a3b8;
+    font-weight: 400;
+}
+
+.session-toggle {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.session-btn {
+    border: 1px solid transparent;
+    background: rgba(30, 41, 59, 0.65);
+    color: #e2e8f0;
+    padding: 0.65rem 1.15rem;
+    border-radius: 999px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.session-btn:hover {
+    transform: translateY(-1px);
+}
+
+.session-btn.active {
+    background: linear-gradient(135deg, #ff6b35, #f59e0b);
+    color: #0f172a;
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.input-row {
+    display: flex;
+    gap: 0.85rem;
+}
+
+.input-row textarea {
+    flex: 1;
+    padding: 0.95rem 1.1rem;
+    border-radius: 0.9rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(30, 41, 59, 0.8);
+    color: inherit;
+    font-size: 1rem;
+    font-family: inherit;
+    resize: vertical;
+    min-height: 2.8rem;
+    max-height: 12rem;
+    line-height: 1.5;
+}
+
+.input-row textarea:focus {
+    outline: 2px solid rgba(255, 107, 53, 0.45);
+    outline-offset: 2px;
+}
+
+.input-row textarea::placeholder {
+    color: #94a3b8;
+}
+
+#sendButton {
+    padding: 0.95rem 1.5rem;
+    border-radius: 0.9rem;
+    border: none;
+    background: linear-gradient(135deg, #ff6b35, #f59e0b);
+    color: #0f172a;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+#sendButton:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+#sendButton:not(:disabled):hover {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 24px rgba(255, 107, 53, 0.35);
+}
+
+.modal::backdrop {
+    background: rgba(15, 23, 42, 0.65);
+    backdrop-filter: blur(6px);
+}
+
+.modal-card {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 1.25rem;
+    padding: clamp(1.75rem, 3vw, 2.25rem);
+    background: rgba(13, 20, 34, 0.95);
+    min-width: min(440px, 80vw);
+    display: grid;
+    gap: 1rem;
+}
+
+.modal-card h2 {
+    font-size: 1.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.field {
+    display: grid;
+    gap: 0.4rem;
+    color: #cbd5f5;
+    text-align: left;
+}
+
+.field input,
+.field textarea {
+    border-radius: 0.85rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(30, 41, 59, 0.8);
+    padding: 0.85rem 1rem;
+    color: inherit;
+    resize: vertical;
+}
+
+.field input:focus,
+.field textarea:focus {
+    outline: 2px solid rgba(255, 107, 53, 0.45);
+    outline-offset: 2px;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+}
+
+.modal-actions button {
+    border-radius: 0.75rem;
+    padding: 0.7rem 1.25rem;
+    border: none;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.modal-actions .primary {
+    background: linear-gradient(135deg, #ff6b35, #f59e0b);
+    color: #0f172a;
+}
+
+.modal-actions .secondary {
+    background: transparent;
+    color: #e2e8f0;
+}
+
+.preview-modal .modal-card {
+    min-width: min(720px, 90vw);
+    max-width: 90vw;
+    max-height: 80vh;
+}
+
+.preview-card {
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    gap: 1.25rem;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.close-btn {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    font-size: 1.25rem;
+    cursor: pointer;
+    padding: 0.25rem;
+    border-radius: 0.5rem;
+    transition: all 0.2s ease;
+}
+
+.close-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #e2e8f0;
+}
+
+.preview-content {
+    background: rgba(30, 41, 59, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.9rem;
+    padding: 1.25rem;
+    overflow-y: auto;
+    max-height: 50vh;
+    line-height: 1.6;
+}
+
+.preview-content::-webkit-scrollbar {
+    width: 8px;
+}
+
+.preview-content::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.3);
+    border-radius: 4px;
+}
+
+.preview-content::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+}
+
+.preview-content::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.preview-content p:first-child {
+    margin-top: 0;
+}
+
+.preview-content p:last-child {
+    margin-bottom: 0;
+}
+
+@media (max-width: 720px) {
+    body {
+        padding: 1.5rem;
+    }
+
+    .chat-feed {
+        max-height: 420px;
+    }
+
+    .input-toolbar {
+        flex-direction: column;
+        gap: 0.5rem;
+        align-items: flex-start;
+    }
+
+    .shortcut-hint {
+        font-size: 0.75rem;
+    }
+
+    .input-row {
+        flex-direction: column;
+    }
+
+    #sendButton {
+        width: 100%;
+    }
+
+    .input-row textarea {
+        max-height: 8rem;
+    }
+
+    .preview-modal .modal-card {
+        min-width: 95vw;
+    }
+
+    .modal-header {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+}

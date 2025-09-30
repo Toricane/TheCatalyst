@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>The Catalyst</title>
+        <link rel="stylesheet" href="./style.css">
+    </head>
+    <body>
+        <div class="app-shell">
+            <header class="header">
+                <h1>🔥 The Catalyst</h1>
+                <p class="subtitle">Your personal AI mentor for audacious goals and relentless execution.</p>
+                <div class="goal-display" id="goalDisplay">Checking for your North Star...</div>
+            </header>
+            <main class="chat-shell">
+                <section class="chat-feed" id="chatFeed">
+                    <!-- Initial message will be generated dynamically --></section>
+                <div class="typing-indicator" id="typingIndicator" aria-hidden="true">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </div>
+            </main>
+            <footer class="input-panel">
+                <div class="session-toggle" role="radiogroup" aria-label="Session type">
+                    <button class="session-btn" data-session="morning">🌅 Morning</button>
+                    <button class="session-btn active" data-session="general">💬 General</button>
+                    <button class="session-btn" data-session="evening">🌙 Evening</button>
+                </div>
+                <div class="input-container">
+                    <div class="input-toolbar">
+                        <button
+                            id="previewButton"
+                            type="button"
+                            class="toolbar-btn"
+                            title="Preview markdown"
+                        >
+                            👁️ Preview
+                        </button>
+                        <div class="input-info">
+                            <span class="shortcut-hint">Shift+Enter for new line • Ctrl+Enter to send</span>
+                        </div>
+                    </div>
+                    <div class="input-row">
+                        <textarea
+                            id="messageInput"
+                            placeholder="Type your message... (supports Markdown)"
+                            autocomplete="off"
+                            rows="3"
+                        ></textarea>
+                        <button id="sendButton" type="button">Send</button>
+                    </div>
+                </div>
+            </footer>
+        </div>
+        <dialog class="modal" id="initModal">
+            <form method="dialog" class="modal-card">
+                <h2>Set Your North Star</h2>
+                <label class="field">
+                    <span>Description</span>
+                    <textarea
+                        id="goalDescription"
+                        rows="3"
+                        required
+                        placeholder="What extraordinary outcome do you want?"
+                    ></textarea>
+                </label>
+                <label class="field">
+                    <span>Metric</span>
+                    <input id="goalMetric" type="text" placeholder="How will we measure success?">
+                </label>
+                <label class="field">
+                    <span>Timeline</span>
+                    <input id="goalTimeline" type="text" placeholder="Timeline (e.g., 6 months)">
+                </label>
+                <menu class="modal-actions">
+                    <button value="cancel" class="secondary">Cancel</button>
+                    <button id="initButton" value="default" class="primary">Ignite 🔥</button>
+                </menu>
+            </form>
+        </dialog>
+        <dialog class="modal preview-modal" id="previewModal">
+            <div class="modal-card preview-card">
+                <div class="modal-header">
+                    <h2>Markdown Preview</h2>
+                    <button type="button" class="close-btn" id="closePreviewBtn">✕</button>
+                </div>
+                <div class="preview-content" id="previewContent">
+                    <!-- Preview content will be rendered here --></div>
+                <menu class="modal-actions">
+                    <button type="button" class="secondary" id="editButton">✏️ Edit</button>
+                    <button type="button" class="primary" id="sendFromPreviewButton">Send Message</button>
+                </menu>
+            </div>
+        </dialog>
+        <script type="module" src="./app.js"></script>
+    </body>
+</html>
