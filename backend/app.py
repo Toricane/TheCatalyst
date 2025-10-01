@@ -31,7 +31,14 @@ from .memory_manager import (
     get_goals_hierarchy,
 )
 from .rate_limiter import estimate_tokens, rate_limiter
-from .schemas import ChatMessage, ChatResponse, Goal, GoalUpdate, SessionType
+from .schemas import (
+    ChatMessage,
+    ChatResponse,
+    Goal,
+    GoalUpdate,
+    GreetingRequest,
+    SessionType,
+)
 from .time_utils import local_now, local_today, to_local, utc_now
 
 RECENT_CONVERSATION_CHAR_LIMIT = 16000
@@ -168,7 +175,9 @@ async def initialize_catalyst(
 
 
 @app.post("/initial-greeting", response_model=ChatResponse)
-async def get_initial_greeting(db: Session = Depends(get_db)) -> ChatResponse:
+async def get_initial_greeting(
+    request: GreetingRequest, db: Session = Depends(get_db)
+) -> ChatResponse:
     """Generate a personalized initial greeting for users with existing goals."""
     missed_info = check_for_missed_sessions(db)
     ltm_profile = get_current_ltm_profile(db)
@@ -297,14 +306,7 @@ async def get_initial_greeting(db: Session = Depends(get_db)) -> ChatResponse:
             session_type=SessionType.GENERAL.value,
         )
 
-    # Determine appropriate session type based on time of day
-    current_hour = local_now().hour
-    if 5 <= current_hour < 12:
-        session_type = SessionType.MORNING
-    elif 18 <= current_hour < 23:
-        session_type = SessionType.EVENING
-    else:
-        session_type = SessionType.GENERAL
+    session_type = request.session_type
 
     # Check if we need a catch-up session
     if missed_info["needs_catchup"] and session_type in {
@@ -312,6 +314,8 @@ async def get_initial_greeting(db: Session = Depends(get_db)) -> ChatResponse:
         SessionType.EVENING,
     }:
         session_type = SessionType.CATCH_UP
+
+    print(f"{session_type=}")
 
     context = {
         "goals": goals,
@@ -380,6 +384,8 @@ async def chat_with_catalyst(
         SessionType.EVENING,
     }:
         actual_session = SessionType.CATCH_UP
+
+    print(f"{actual_session=}")
 
     ltm_profile = get_current_ltm_profile(db)
     goals = get_goals_hierarchy(db)

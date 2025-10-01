@@ -29,6 +29,13 @@ class ChatResponse(BaseModel):
     model: Optional[str] = None
 
 
+class GreetingRequest(BaseModel):
+    session_type: SessionType = Field(
+        default=SessionType.GENERAL,
+        description="Frontend-selected session type for the initial greeting",
+    )
+
+
 class Goal(BaseModel):
     description: str
     metric: Optional[str] = None

@@ -44,6 +44,25 @@ const goalTimeline = document.getElementById("goalTimeline");
 let activeSession = "general";
 let isSending = false;
 
+function determineSessionTypeByLocalTime() {
+    const hour = new Date().getHours();
+    if (hour >= 5 && hour < 12) return "morning";
+    if (hour >= 18 && hour < 23) return "evening";
+    return "general";
+}
+
+function setActiveSession(session) {
+    const validSessions = new Set(["morning", "general", "evening"]);
+    const nextSession = validSessions.has(session) ? session : "general";
+    activeSession = nextSession;
+
+    sessionButtons.forEach((btn) => {
+        const isActive = btn.dataset.session === nextSession;
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+}
+
 function appendMessage(role, text, options = {}) {
     const article = document.createElement("article");
     article.className = `message ${role}`;
@@ -189,10 +208,7 @@ async function initializeCatalyst() {
 
 function handleSessionClick(event) {
     const button = event.currentTarget;
-    activeSession = button.dataset.session;
-    sessionButtons.forEach((btn) =>
-        btn.classList.toggle("active", btn === button)
-    );
+    setActiveSession(button.dataset.session);
 }
 
 function showPreview() {
@@ -271,6 +287,7 @@ async function generateInitialGreeting() {
         setSending(true);
         const data = await fetchJSON(`${API_BASE_URL}/initial-greeting`, {
             method: "POST",
+            body: JSON.stringify({ session_type: activeSession }),
         });
         appendMessage("catalyst", data.response, {
             model: data.model,
@@ -283,6 +300,7 @@ async function generateInitialGreeting() {
 }
 
 async function init() {
+    setActiveSession(determineSessionTypeByLocalTime());
     bindEvents();
     autoResizeTextarea(); // Set initial height
     const hasGoal = await refreshGoalDisplay();
