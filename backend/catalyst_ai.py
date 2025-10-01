@@ -423,12 +423,35 @@ def _build_system_prompt(session_type: SessionType, context: Dict[str, Any]) -> 
     else:
         base_prompt = "You are The Catalyst, an elite AI mentor."
 
+    recent_conversations = context.get("recent_conversations") or []
+    recent_block = ""
+    if recent_conversations:
+        excerpts = []
+        for entry in recent_conversations[-5:]:
+            timestamp = entry.get("timestamp") or "Recent"
+            user_text = (entry.get("user") or "").strip()
+            catalyst_text = (entry.get("catalyst") or "").strip()
+
+            if len(user_text) > 160:
+                user_text = user_text[:157] + "…"
+            if len(catalyst_text) > 200:
+                catalyst_text = catalyst_text[:197] + "…"
+
+            excerpts.append(
+                f'- {timestamp}: User → "{user_text or "…"}" | Catalyst → "{catalyst_text or "…"}"'
+            )
+
+        recent_block = (
+            "### Recent Conversation Highlights:\n" + "\n".join(excerpts) + "\n\n"
+        )
+
     prompt = f"{base_prompt}\n\n" + (
         "## Current Context\n\n"
         f"### User's Goal Hierarchy:\n{json.dumps(context['goals'], indent=2)}\n\n"
         f"### User's Long-Term Memory Profile:\n{context['ltm_profile']['full_text']}\n\n"
         f"### Recent Patterns Identified:\n{context['ltm_profile']['patterns']}\n\n"
         f"### Current State:\n{context['ltm_profile']['current_state']}\n\n"
+        f"{recent_block}"
         f"### Session Information:\n- Session Type: {session_type.value}\n"
         f"- Current Date: {local_now().strftime('%Y-%m-%d')}\n"
         f"- Missed Sessions: {context.get('missed_sessions', [])}\n\n"

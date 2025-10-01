@@ -362,6 +362,24 @@ Current context:
         primary_model=ALT_MODEL_NAME,
     )
 
+    # Persist the initial greeting so future chats can reference it
+    greeting_record = models.Conversation(
+        session_type=session_type.value,
+        messages=json.dumps(
+            {
+                "user": None,
+                "catalyst": response["response"],
+                "timestamp": utc_now().isoformat(),
+                "function_calls": response.get("function_calls", []),
+                "model": response.get("model"),
+                "initial_greeting": True,
+            }
+        ),
+        thinking_log=response.get("thinking") or "",
+    )
+    db.add(greeting_record)
+    db.commit()
+
     return ChatResponse(
         response=response["response"],
         memory_updated=False,
@@ -397,10 +415,44 @@ async def chat_with_catalyst(
             session_type=actual_session.value,
         )
 
+    recent_records = (
+        db.query(models.Conversation)
+        .order_by(models.Conversation.created_at.desc())
+        .limit(8)
+        .all()
+    )
+
+    recent_conversations: List[Dict[str, Any]] = []
+    for record in reversed(recent_records):
+        try:
+            messages = json.loads(record.messages) if record.messages else {}
+        except json.JSONDecodeError:
+            messages = {}
+
+        user_text = messages.get("user") or ""
+        catalyst_text = messages.get("catalyst") or ""
+        if not user_text and not catalyst_text:
+            continue
+
+        recent_conversations.append(
+            {
+                "session_type": record.session_type,
+                "user": user_text,
+                "catalyst": catalyst_text,
+                "timestamp": messages.get("timestamp")
+                or (
+                    to_local(record.created_at).isoformat()
+                    if record.created_at
+                    else None
+                ),
+            }
+        )
+
     context = {
         "goals": goals,
         "ltm_profile": ltm_profile,
         "missed_sessions": missed_info.get("missed_sessions", []),
+        "recent_conversations": recent_conversations,
     }
 
     response = await generate_catalyst_response(
