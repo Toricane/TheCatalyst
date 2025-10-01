@@ -423,6 +423,9 @@ async def chat_with_catalyst(
     )
 
     recent_conversations: List[Dict[str, Any]] = []
+    pending_greetings: List[Dict[str, Any]] = []
+    user_message_seen = False
+
     for record in reversed(recent_records):
         try:
             messages = json.loads(record.messages) if record.messages else {}
@@ -431,20 +434,58 @@ async def chat_with_catalyst(
 
         user_text = messages.get("user") or ""
         catalyst_text = messages.get("catalyst") or ""
-        if not user_text and not catalyst_text:
+        is_initial_greeting = bool(messages.get("initial_greeting"))
+
+        if not user_text and not catalyst_text and not is_initial_greeting:
             continue
+
+        entry = {
+            "session_type": record.session_type,
+            "user": user_text,
+            "catalyst": catalyst_text,
+            "timestamp": messages.get("timestamp")
+            or (to_local(record.created_at).isoformat() if record.created_at else None),
+        }
+
+        if is_initial_greeting:
+            if user_message_seen:
+                recent_conversations.append(entry)
+            else:
+                pending_greetings.append(entry)
+            continue
+
+        stripped_user = user_text.strip()
+        if stripped_user and pending_greetings:
+            recent_conversations.extend(pending_greetings)
+            pending_greetings = []
+
+        if stripped_user:
+            user_message_seen = True
+
+        recent_conversations.append(entry)
+
+    if user_message_seen and pending_greetings:
+        recent_conversations.extend(pending_greetings)
+
+    greeting_payload = message.initial_greeting
+    greeting_session_value: Optional[str] = None
+    greeting_timestamp: Optional[str] = None
+    if greeting_payload and greeting_payload.text:
+        greeting_session = greeting_payload.session_type or actual_session
+        greeting_session_value = (
+            greeting_session.value
+            if isinstance(greeting_session, SessionType)
+            else str(greeting_session)
+        )
+        greeting_timestamp = greeting_payload.timestamp or utc_now().isoformat()
 
         recent_conversations.append(
             {
-                "session_type": record.session_type,
-                "user": user_text,
-                "catalyst": catalyst_text,
-                "timestamp": messages.get("timestamp")
-                or (
-                    to_local(record.created_at).isoformat()
-                    if record.created_at
-                    else None
-                ),
+                "session_type": greeting_session_value,
+                "user": "",
+                "catalyst": greeting_payload.text,
+                "timestamp": greeting_timestamp,
+                "initial_greeting": True,
             }
         )
 
@@ -459,6 +500,23 @@ async def chat_with_catalyst(
         message.message, actual_session, context
     )
     memory_updated = response["memory_updated"]
+
+    if greeting_payload and greeting_payload.text and greeting_session_value:
+        greeting_record = models.Conversation(
+            session_type=greeting_session_value,
+            messages=json.dumps(
+                {
+                    "user": None,
+                    "catalyst": greeting_payload.text,
+                    "timestamp": greeting_timestamp or utc_now().isoformat(),
+                    "function_calls": [],
+                    "model": greeting_payload.model,
+                    "initial_greeting": True,
+                }
+            ),
+            thinking_log="",
+        )
+        db.add(greeting_record)
 
     conversation = models.Conversation(
         session_type=actual_session.value,

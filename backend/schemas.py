@@ -16,9 +16,29 @@ class SessionType(str, Enum):
     INITIALIZATION = "initialization"
 
 
+class InitialGreeting(BaseModel):
+    text: str = Field(..., description="The generated initial greeting text")
+    session_type: Optional[SessionType] = Field(
+        default=None,
+        description="Session type associated with the greeting, if any",
+    )
+    timestamp: Optional[str] = Field(
+        default=None,
+        description="ISO timestamp when the greeting was generated",
+    )
+    model: Optional[str] = Field(
+        default=None,
+        description="Model identifier used to generate the greeting",
+    )
+
+
 class ChatMessage(BaseModel):
     message: str = Field(..., description="User message body")
     session_type: SessionType = Field(default=SessionType.GENERAL)
+    initial_greeting: Optional[InitialGreeting] = Field(
+        default=None,
+        description="Latest initial greeting shown to the user prior to this message",
+    )
 
 
 class ChatResponse(BaseModel):

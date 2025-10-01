@@ -43,6 +43,7 @@ const goalTimeline = document.getElementById("goalTimeline");
 
 let activeSession = "general";
 let isSending = false;
+let pendingInitialGreeting = null;
 
 function determineSessionTypeByLocalTime() {
     const hour = new Date().getHours();
@@ -154,6 +155,9 @@ async function sendMessage() {
 
     try {
         const payload = { message: text, session_type: activeSession };
+        if (pendingInitialGreeting) {
+            payload.initial_greeting = { ...pendingInitialGreeting };
+        }
         const data = await fetchJSON(`${API_BASE_URL}/chat`, {
             method: "POST",
             body: JSON.stringify(payload),
@@ -162,6 +166,10 @@ async function sendMessage() {
         appendMessage("catalyst", data.response, {
             model: data.model,
         });
+
+        if (pendingInitialGreeting) {
+            pendingInitialGreeting = null;
+        }
 
         if (data.memory_updated) {
             await refreshGoalDisplay();
@@ -292,8 +300,15 @@ async function generateInitialGreeting() {
         appendMessage("catalyst", data.response, {
             model: data.model,
         });
+        pendingInitialGreeting = {
+            text: data.response,
+            session_type: activeSession,
+            model: data.model || null,
+            timestamp: new Date().toISOString(),
+        };
     } catch (error) {
         appendMessage("catalyst", `<strong>System</strong>: ${error.message}`);
+        pendingInitialGreeting = null;
     } finally {
         setSending(false);
     }
