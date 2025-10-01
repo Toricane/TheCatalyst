@@ -69,7 +69,7 @@ def test_function_calling():
     try:
         os.environ["DATABASE_URL"] = f"sqlite:///{temp_db_path.as_posix()}"
 
-        _, database_module, _, functions_module = _reload_backend_modules()
+        _, database_module, models_module, functions_module = _reload_backend_modules()
         init_database = database_module.init_database
         catalyst_functions = functions_module.catalyst_functions
 
@@ -110,6 +110,53 @@ def test_function_calling():
             current_state="In setup phase, eager to begin using the system",
         )
         print(f"   Result: {result}")
+        print()
+
+        # Test update_ltm_profile with profile_content auto parsing
+        print("4b. Testing update_ltm_profile with profile_content...")
+        profile_markdown = (
+            "# USER PROFILE - The Catalyst Memory System\n\n"
+            "## Overview & North Star\n"
+            "- Goal: Transfer to UBC Engineering Physics by 2026.\n\n"
+            "## Key Patterns\n"
+            "- Emerging Pattern: Productive Procrastination / Single-threading.\n"
+            "- Emerging Pattern: Efficient Micro-gap Utilization.\n\n"
+            "## Recurring Challenges\n"
+            "- Time Allocation & Distraction Management.\n"
+            "- Backlog Management.\n\n"
+            "## Breakthroughs & Wins\n"
+            "- Day 1: Articulated North Star.\n"
+            "- Day 2: Catalyst Creation.\n\n"
+            "## Personality Traits\n"
+            "- Ambitious & Goal-Oriented.\n"
+            "- Proactive & Action-Oriented.\n\n"
+            "## Current State & Momentum\n"
+            "- Status: Gaining initial momentum.\n"
+            "- Next Focus: Optimize time management.\n"
+        )
+        result = catalyst_functions["update_ltm_profile"](
+            profile_content=profile_markdown
+        )
+        print(f"   Result: {result}")
+
+        with database_module.SessionLocal() as session:
+            latest_profile = (
+                session.query(models_module.LTMProfile)
+                .order_by(models_module.LTMProfile.version.desc())
+                .first()
+            )
+
+            assert latest_profile is not None
+            assert "Productive Procrastination" in (
+                latest_profile.patterns_section or ""
+            )
+            assert "Time Allocation" in (latest_profile.challenges_section or "")
+            assert "Catalyst Creation" in (latest_profile.breakthroughs_section or "")
+            assert "Ambitious" in (latest_profile.personality_section or "")
+            assert "Optimize time management" in (
+                latest_profile.current_state_section or ""
+            )
+
         print()
 
         # Test extract_insights

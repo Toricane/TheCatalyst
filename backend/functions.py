@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable, Dict, List
 
 from google.genai import types
@@ -12,6 +13,68 @@ from .models import DailyLog, Insight, LTMProfile, SessionTracking
 from .time_utils import local_today, to_local, utc_now
 
 catalyst_functions: Dict[str, Callable[..., Any]] = {}
+
+_SECTION_ALIASES: Dict[str, List[str]] = {
+    "patterns": ["key patterns", "patterns"],
+    "challenges": ["recurring challenges", "challenges"],
+    "breakthroughs": ["breakthroughs & wins", "breakthroughs", "wins"],
+    "personality": ["personality traits", "personality"],
+    "current_state": ["current state & momentum", "current state", "momentum"],
+}
+
+
+def _strip_code_fences(text: str | None) -> str:
+    """Remove optional Markdown code fences from text."""
+
+    if not text:
+        return ""
+
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```[\w-]*\s*", "", stripped, count=1)
+        if stripped.endswith("```"):
+            stripped = stripped[: stripped.rfind("```")]
+
+    return stripped.strip()
+
+
+def _extract_profile_sections(text: str) -> Dict[str, str]:
+    """Extract structured LTM sections from a markdown-formatted profile."""
+
+    if not text:
+        return {}
+
+    heading_pattern = re.compile(r"^#{1,6}\s+(.*)$")
+    current_heading: str | None = None
+    buffer: List[str] = []
+    collected: Dict[str, str] = {}
+
+    def _flush_buffer(heading: str | None) -> None:
+        if heading is None or not buffer:
+            return
+        heading_lower = heading.lower()
+        content = "\n".join(buffer).strip()
+        if not content:
+            return
+        for field, aliases in _SECTION_ALIASES.items():
+            if any(alias in heading_lower for alias in aliases):
+                collected[field] = content
+                break
+
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        heading_match = heading_pattern.match(line.strip())
+        if heading_match:
+            _flush_buffer(current_heading)
+            current_heading = heading_match.group(1).strip()
+            buffer = []
+            continue
+
+        if current_heading is not None:
+            buffer.append(raw_line)
+
+    _flush_buffer(current_heading)
+    return collected
 
 
 def catalyst_function(
@@ -58,26 +121,49 @@ def log_daily_reflection(
 
 @catalyst_function("update_ltm_profile")
 def update_ltm_profile_function(
-    summary_text: str,
+    summary_text: str | None = None,
     patterns: str = "",
     challenges: str = "",
     breakthroughs: str = "",
     personality: str = "",
     current_state: str = "",
+    profile_content: str | None = None,
 ) -> Dict[str, Any]:
-    """Update the long-term memory profile."""
+    """Update the long-term memory profile, auto-populating sections when possible."""
+
+    source_text = summary_text or profile_content
+    cleaned_summary = _strip_code_fences(source_text)
+
+    if not cleaned_summary:
+        raise ValueError(
+            "update_ltm_profile requires either summary_text or profile_content"
+        )
+
+    derived_sections = _extract_profile_sections(cleaned_summary)
+
+    def _finalize_section(value: str, key: str) -> str:
+        candidate = value if value and value.strip() else derived_sections.get(key, "")
+        return _strip_code_fences(candidate)
+
+    final_patterns = _finalize_section(patterns, "patterns")
+    final_challenges = _finalize_section(challenges, "challenges")
+    final_breakthroughs = _finalize_section(breakthroughs, "breakthroughs")
+    final_personality = _finalize_section(personality, "personality")
+    final_current_state = _finalize_section(current_state, "current_state")
+
+    token_estimate = int(len(cleaned_summary.split()) * 1.3)
+
     with get_session() as session:
         current_version = session.query(func.max(LTMProfile.version)).scalar() or 0
         new_version = current_version + 1
-        token_estimate = int(len(summary_text.split()) * 1.3)
 
         profile = LTMProfile(
-            summary_text=summary_text,
-            patterns_section=patterns,
-            challenges_section=challenges,
-            breakthroughs_section=breakthroughs,
-            personality_section=personality,
-            current_state_section=current_state,
+            summary_text=cleaned_summary,
+            patterns_section=final_patterns,
+            challenges_section=final_challenges,
+            breakthroughs_section=final_breakthroughs,
+            personality_section=final_personality,
+            current_state_section=final_current_state,
             version=new_version,
             token_count=token_estimate,
         )
@@ -215,6 +301,13 @@ def create_function_definitions() -> List[types.FunctionDeclaration]:
                     ),
                     "current_state": types.Schema(
                         type=types.Type.STRING, description="Current state and momentum"
+                    ),
+                    "profile_content": types.Schema(
+                        type=types.Type.STRING,
+                        description=(
+                            "Optional alias for summary_text that allows the model to "
+                            "pass the entire profile markdown for auto-section parsing"
+                        ),
                     ),
                 },
                 required=["summary_text"],
