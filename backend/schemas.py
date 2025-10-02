@@ -30,11 +30,19 @@ class InitialGreeting(BaseModel):
         default=None,
         description="Model identifier used to generate the greeting",
     )
+    conversation_id: Optional[str] = Field(
+        default=None,
+        description="Conversation thread identifier associated with the greeting",
+    )
 
 
 class ChatMessage(BaseModel):
     message: str = Field(..., description="User message body")
     session_type: SessionType = Field(default=SessionType.GENERAL)
+    conversation_id: Optional[str] = Field(
+        default=None,
+        description="Conversation thread identifier. When omitted, a new conversation is created.",
+    )
     initial_greeting: Optional[InitialGreeting] = Field(
         default=None,
         description="Latest initial greeting shown to the user prior to this message",
@@ -45,6 +53,7 @@ class ChatResponse(BaseModel):
     response: str
     memory_updated: bool = False
     session_type: str
+    conversation_id: Optional[str] = None
     thinking: Optional[str] = None
     model: Optional[str] = None
 

@@ -13,46 +13,66 @@
                 <p class="subtitle">Your personal AI mentor for audacious goals and relentless execution.</p>
                 <div class="goal-display" id="goalDisplay">Checking for your North Star...</div>
             </header>
-            <main class="chat-shell">
-                <section class="chat-feed" id="chatFeed">
-                    <!-- Initial message will be generated dynamically --></section>
-                <div class="typing-indicator" id="typingIndicator" aria-hidden="true">
-                    <span></span>
-                    <span></span>
-                    <span></span>
-                </div>
-            </main>
-            <footer class="input-panel">
-                <div class="session-toggle" role="radiogroup" aria-label="Session type">
-                    <button class="session-btn" data-session="morning">🌅 Morning</button>
-                    <button class="session-btn active" data-session="general">💬 General</button>
-                    <button class="session-btn" data-session="evening">🌙 Evening</button>
-                </div>
-                <div class="input-container">
-                    <div class="input-toolbar">
-                        <button
-                            id="previewButton"
-                            type="button"
-                            class="toolbar-btn"
-                            title="Preview markdown"
-                        >
-                            👁️ Preview
+            <div class="workspace-grid">
+                <aside class="conversation-panel" aria-label="Conversation history">
+                    <div class="conversation-header">
+                        <h2>Conversations</h2>
+                        <button id="newConversationButton" type="button" class="new-conversation-btn">
+                            ＋ New
                         </button>
-                        <div class="input-info">
-                            <span class="shortcut-hint">Shift+Enter for new line • Ctrl+Enter to send</span>
+                    </div>
+                    <div class="conversation-list" id="conversationList" role="list"></div>
+                    <p class="conversation-empty" id="conversationEmpty" hidden>
+                        No conversations yet. Start a new one to ignite momentum.
+                    </p>
+                </aside>
+                <div class="chat-column">
+                    <main class="chat-shell">
+                        <div class="conversation-summary" id="conversationSummary"></div>
+                        <section class="chat-feed" id="chatFeed">
+                            <!-- Messages render here dynamically --></section>
+                        <div class="typing-indicator" id="typingIndicator" aria-hidden="true">
+                            <span></span>
+                            <span></span>
+                            <span></span>
                         </div>
-                    </div>
-                    <div class="input-row">
-                        <textarea
-                            id="messageInput"
-                            placeholder="Type your message... (supports Markdown)"
-                            autocomplete="off"
-                            rows="3"
-                        ></textarea>
-                        <button id="sendButton" type="button">Send</button>
-                    </div>
+                    </main>
+                    <footer class="input-panel">
+                        <div class="readonly-banner" id="readonlyBanner" hidden>
+                            You're viewing a previous conversation. Start a new conversation to continue.
+                        </div>
+                        <div class="session-toggle" role="radiogroup" aria-label="Session type">
+                            <button class="session-btn" data-session="morning">🌅 Morning</button>
+                            <button class="session-btn active" data-session="general">💬 General</button>
+                            <button class="session-btn" data-session="evening">🌙 Evening</button>
+                        </div>
+                        <div class="input-container">
+                            <div class="input-toolbar">
+                                <button
+                                    id="previewButton"
+                                    type="button"
+                                    class="toolbar-btn"
+                                    title="Preview markdown"
+                                >
+                                    👁️ Preview
+                                </button>
+                                <div class="input-info">
+                                    <span class="shortcut-hint">Shift+Enter for new line • Ctrl+Enter to send</span>
+                                </div>
+                            </div>
+                            <div class="input-row">
+                                <textarea
+                                    id="messageInput"
+                                    placeholder="Type your message... (supports Markdown)"
+                                    autocomplete="off"
+                                    rows="3"
+                                ></textarea>
+                                <button id="sendButton" type="button">Send</button>
+                            </div>
+                        </div>
+                    </footer>
                 </div>
-            </footer>
+            </div>
         </div>
         <dialog class="modal" id="initModal">
             <form method="dialog" class="modal-card">
@@ -94,6 +114,22 @@
                 </menu>
             </div>
         </dialog>
+        <div
+            class="context-menu"
+            id="conversationContextMenu"
+            role="menu"
+            aria-hidden="true"
+            hidden
+        >
+            <button
+                type="button"
+                class="context-menu-item destructive"
+                data-action="delete"
+                role="menuitem"
+            >
+                🗑 Delete conversation
+            </button>
+        </div>
         <script type="module" src="./app.js"></script>
     </body>
 </html>

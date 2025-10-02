@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from math import ceil
 from typing import Any, Dict, Generator, List, Optional, Tuple
+from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from google import genai
 from google.genai import types
@@ -42,6 +43,44 @@ from .schemas import (
 from .time_utils import local_now, local_today, to_local, utc_now
 
 RECENT_CONVERSATION_CHAR_LIMIT = 16000
+
+
+def _conversation_id_for_record(
+    record: models.Conversation, messages: Dict[str, Any]
+) -> str:
+    if getattr(record, "conversation_uuid", None):
+        return str(record.conversation_uuid)
+    conversation_id = messages.get("conversation_id")
+    if conversation_id:
+        return str(conversation_id)
+    return f"legacy-{record.id}"
+
+
+def _message_timestamp(
+    messages: Dict[str, Any], record: models.Conversation
+) -> Optional[str]:
+    timestamp_str: Optional[str] = messages.get("timestamp")
+    if timestamp_str:
+        return timestamp_str
+    if record.created_at:
+        localized = to_local(record.created_at)
+        if localized:
+            return localized.isoformat()
+        return record.created_at.isoformat()
+    return None
+
+
+def _parse_iso_timestamp(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -165,10 +204,33 @@ async def initialize_catalyst(
         context,
     )
 
+    conversation_id = str(uuid4())
+    timestamp = utc_now().isoformat()
+
+    conversation_snapshot = models.Conversation(
+        session_type=SessionType.INITIALIZATION.value,
+        conversation_uuid=conversation_id,
+        messages=json.dumps(
+            {
+                "user": goal_prompt,
+                "catalyst": response["response"],
+                "timestamp": timestamp,
+                "function_calls": response.get("function_calls", []),
+                "model": response.get("model"),
+                "conversation_id": conversation_id,
+                "is_conversation_start": True,
+            }
+        ),
+        thinking_log=response.get("thinking") or "",
+    )
+    db.add(conversation_snapshot)
+    db.commit()
+
     return ChatResponse(
         response=response["response"],
         memory_updated=True,
         session_type=SessionType.INITIALIZATION.value,
+        conversation_id=conversation_id,
         thinking=response.get("thinking") if SHOW_THINKING else None,
         model=response.get("model"),
     )
@@ -226,6 +288,7 @@ async def get_initial_greeting(
 
         entry = {
             "id": record.id,
+            "conversation_id": _conversation_id_for_record(record, messages),
             "timestamp": created_local.isoformat() if created_local else None,
             "user": user_snippet,
             "catalyst": catalyst_snippet,
@@ -362,17 +425,23 @@ Current context:
         primary_model=ALT_MODEL_NAME,
     )
 
+    conversation_id = str(uuid4())
+    timestamp = utc_now().isoformat()
+
     # Persist the initial greeting so future chats can reference it
     greeting_record = models.Conversation(
         session_type=session_type.value,
+        conversation_uuid=conversation_id,
         messages=json.dumps(
             {
                 "user": None,
                 "catalyst": response["response"],
-                "timestamp": utc_now().isoformat(),
+                "timestamp": timestamp,
                 "function_calls": response.get("function_calls", []),
                 "model": response.get("model"),
                 "initial_greeting": True,
+                "conversation_id": conversation_id,
+                "is_conversation_start": True,
             }
         ),
         thinking_log=response.get("thinking") or "",
@@ -384,6 +453,7 @@ Current context:
         response=response["response"],
         memory_updated=False,
         session_type=session_type.value,
+        conversation_id=conversation_id,
         thinking=response.get("thinking") if SHOW_THINKING else None,
         model=response.get("model"),
     )
@@ -396,6 +466,27 @@ async def chat_with_catalyst(
 ) -> ChatResponse:
     missed_info = check_for_missed_sessions(db)
     actual_session = message.session_type
+
+    conversation_id: Optional[str] = message.conversation_id
+    if conversation_id is None and message.initial_greeting:
+        conversation_id = message.initial_greeting.conversation_id
+
+    created_new_conversation = False
+    if conversation_id is None:
+        latest_record = (
+            db.query(models.Conversation)
+            .order_by(models.Conversation.created_at.desc())
+            .first()
+        )
+        if latest_record and latest_record.messages:
+            try:
+                latest_payload = json.loads(latest_record.messages)
+            except json.JSONDecodeError:
+                latest_payload = {}
+            conversation_id = _conversation_id_for_record(latest_record, latest_payload)
+        else:
+            conversation_id = str(uuid4())
+            created_new_conversation = True
 
     if missed_info["needs_catchup"] and message.session_type in {
         SessionType.MORNING,
@@ -443,6 +534,7 @@ async def chat_with_catalyst(
             "session_type": record.session_type,
             "user": user_text,
             "catalyst": catalyst_text,
+            "conversation_id": _conversation_id_for_record(record, messages),
             "timestamp": messages.get("timestamp")
             or (to_local(record.created_at).isoformat() if record.created_at else None),
         }
@@ -478,6 +570,8 @@ async def chat_with_catalyst(
             else str(greeting_session)
         )
         greeting_timestamp = greeting_payload.timestamp or utc_now().isoformat()
+        if greeting_payload.conversation_id is None:
+            greeting_payload.conversation_id = conversation_id
 
         recent_conversations.append(
             {
@@ -485,6 +579,7 @@ async def chat_with_catalyst(
                 "user": "",
                 "catalyst": greeting_payload.text,
                 "timestamp": greeting_timestamp,
+                "conversation_id": conversation_id,
                 "initial_greeting": True,
             }
         )
@@ -504,6 +599,7 @@ async def chat_with_catalyst(
     if greeting_payload and greeting_payload.text and greeting_session_value:
         greeting_record = models.Conversation(
             session_type=greeting_session_value,
+            conversation_uuid=greeting_payload.conversation_id,
             messages=json.dumps(
                 {
                     "user": None,
@@ -512,14 +608,18 @@ async def chat_with_catalyst(
                     "function_calls": [],
                     "model": greeting_payload.model,
                     "initial_greeting": True,
+                    "conversation_id": greeting_payload.conversation_id,
+                    "is_conversation_start": True,
                 }
             ),
             thinking_log="",
         )
         db.add(greeting_record)
+        created_new_conversation = False
 
     conversation = models.Conversation(
         session_type=actual_session.value,
+        conversation_uuid=conversation_id,
         messages=json.dumps(
             {
                 "user": message.message,
@@ -527,6 +627,8 @@ async def chat_with_catalyst(
                 "timestamp": utc_now().isoformat(),
                 "function_calls": response.get("function_calls", []),
                 "model": response.get("model"),
+                "conversation_id": conversation_id,
+                "is_conversation_start": created_new_conversation,
             }
         ),
         thinking_log=response.get("thinking") or "",
@@ -576,6 +678,7 @@ async def chat_with_catalyst(
         response=response["response"],
         memory_updated=memory_updated,
         session_type=actual_session.value,
+        conversation_id=conversation_id,
         thinking=response.get("thinking") if SHOW_THINKING else None,
         model=response.get("model"),
     )
@@ -769,6 +872,229 @@ async def get_recent_conversations(
             }
         )
     return conversations
+
+
+@app.get("/conversations")
+async def list_conversations(
+    limit: Optional[int] = None, db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    query = db.query(models.Conversation).order_by(
+        models.Conversation.created_at.desc()
+    )
+    if limit:
+        query = query.limit(limit)
+
+    records = query.all()
+    grouped: Dict[str, Dict[str, Any]] = {}
+
+    for record in records:
+        try:
+            messages = json.loads(record.messages) if record.messages else {}
+        except json.JSONDecodeError:
+            messages = {}
+
+        conversation_id = _conversation_id_for_record(record, messages)
+        timestamp_iso = _message_timestamp(messages, record)
+        timestamp_dt = _parse_iso_timestamp(timestamp_iso) or to_local(
+            record.created_at
+        )
+
+        info = grouped.setdefault(
+            conversation_id,
+            {
+                "conversation_id": conversation_id,
+                "message_count": 0,
+                "preview": "",
+                "started_at": timestamp_dt,
+                "updated_at": timestamp_dt,
+                "session_types": set(),
+            },
+        )
+
+        info["message_count"] += 1
+        if timestamp_dt and (
+            info["started_at"] is None or timestamp_dt < info["started_at"]
+        ):
+            info["started_at"] = timestamp_dt
+        if timestamp_dt and (
+            info["updated_at"] is None or timestamp_dt > info["updated_at"]
+        ):
+            info["updated_at"] = timestamp_dt
+
+        if record.session_type:
+            info["session_types"].add(record.session_type)
+
+        preview_source = (
+            messages.get("user") or messages.get("catalyst") or ""
+        ).strip()
+        if preview_source and not info["preview"]:
+            info["preview"] = preview_source[:160]
+
+    conversations_list: List[Dict[str, Any]] = []
+    for data in grouped.values():
+        session_types = sorted(data["session_types"])
+        conversations_list.append(
+            {
+                "conversation_id": data["conversation_id"],
+                "message_count": data["message_count"],
+                "preview": data["preview"],
+                "started_at": data["started_at"].isoformat()
+                if isinstance(data["started_at"], datetime)
+                else data["started_at"],
+                "updated_at": data["updated_at"].isoformat()
+                if isinstance(data["updated_at"], datetime)
+                else data["updated_at"],
+                "session_types": session_types,
+            }
+        )
+
+    conversations_list.sort(
+        key=lambda item: item["updated_at"] or "",
+        reverse=True,
+    )
+
+    latest_conversation_id = (
+        conversations_list[0]["conversation_id"] if conversations_list else None
+    )
+
+    return {
+        "conversations": conversations_list,
+        "latest_conversation_id": latest_conversation_id,
+    }
+
+
+@app.get("/conversations/{conversation_id}")
+async def get_conversation_transcript(
+    conversation_id: str, db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    records = (
+        db.query(models.Conversation)
+        .order_by(models.Conversation.created_at.asc())
+        .all()
+    )
+
+    transcript: List[Dict[str, Any]] = []
+    session_types: set[str] = set()
+    started_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    message_count = 0
+
+    for record in records:
+        if not record.messages:
+            continue
+
+        try:
+            messages = json.loads(record.messages)
+        except json.JSONDecodeError:
+            messages = {}
+
+        record_conversation_id = _conversation_id_for_record(record, messages)
+        if record_conversation_id != conversation_id:
+            continue
+
+        timestamp_iso = _message_timestamp(messages, record)
+        timestamp_dt = _parse_iso_timestamp(timestamp_iso) or to_local(
+            record.created_at
+        )
+
+        if timestamp_dt:
+            if started_at is None or timestamp_dt < started_at:
+                started_at = timestamp_dt
+            if updated_at is None or timestamp_dt > updated_at:
+                updated_at = timestamp_dt
+
+        if record.session_type:
+            session_types.add(record.session_type)
+
+        message_count += 1
+
+        user_text = (messages.get("user") or "").strip()
+        catalyst_text = (messages.get("catalyst") or "").strip()
+
+        if user_text:
+            transcript.append(
+                {
+                    "role": "user",
+                    "content": user_text,
+                    "timestamp": timestamp_iso,
+                    "session_type": record.session_type,
+                }
+            )
+
+        if catalyst_text:
+            transcript.append(
+                {
+                    "role": "catalyst",
+                    "content": catalyst_text,
+                    "timestamp": timestamp_iso,
+                    "session_type": record.session_type,
+                    "model": messages.get("model"),
+                    "thinking": record.thinking_log or None,
+                    "function_calls": messages.get("function_calls", []),
+                }
+            )
+
+    if message_count == 0:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    transcript.sort(
+        key=lambda item: _parse_iso_timestamp(item.get("timestamp"))
+        or datetime.min.replace(tzinfo=timezone.utc)
+    )
+
+    return {
+        "conversation_id": conversation_id,
+        "messages": transcript,
+        "metadata": {
+            "message_count": message_count,
+            "session_types": sorted(session_types),
+            "started_at": started_at.isoformat() if started_at else None,
+            "updated_at": updated_at.isoformat() if updated_at else None,
+        },
+    }
+
+
+@app.delete("/conversations/{conversation_id}", status_code=204)
+async def delete_conversation(
+    conversation_id: str, db: Session = Depends(get_db)
+) -> Response:
+    deleted_count = 0
+
+    matching_records = (
+        db.query(models.Conversation)
+        .filter(models.Conversation.conversation_uuid == conversation_id)
+        .all()
+    )
+
+    for record in matching_records:
+        db.delete(record)
+        deleted_count += 1
+
+    if deleted_count == 0:
+        legacy_records = (
+            db.query(models.Conversation)
+            .filter(models.Conversation.conversation_uuid.is_(None))
+            .all()
+        )
+
+        for record in legacy_records:
+            if not record.messages:
+                continue
+            try:
+                payload = json.loads(record.messages)
+            except json.JSONDecodeError:
+                payload = {}
+
+            derived_id = _conversation_id_for_record(record, payload)
+            if derived_id == conversation_id:
+                db.delete(record)
+                deleted_count += 1
+
+    if deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    db.commit()
+    return Response(status_code=204)
 
 
 @app.get("/test/functions")

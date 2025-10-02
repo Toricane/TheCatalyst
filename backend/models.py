@@ -68,6 +68,7 @@ class Conversation(Base):
     __tablename__ = "conversations"
 
     id: int = Column(Integer, primary_key=True, index=True)
+    conversation_uuid: Optional[str] = Column(String(64), index=True)
     session_type: Optional[str] = Column(String(50))
     messages: Optional[str] = Column(Text)
     thinking_log: Optional[str] = Column(Text)
