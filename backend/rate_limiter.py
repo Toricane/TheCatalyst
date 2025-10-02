@@ -22,6 +22,7 @@ class _ModelState:
     token_sum: int = 0
     placeholder_tokens: Deque[int] = field(default_factory=deque)
     pending_token_sum: int = 0
+    cooldown_until: float = 0.0
 
 
 class RateLimiter:
@@ -71,6 +72,9 @@ class RateLimiter:
         rpm = limits.get("rpm", 0) or 0
         rpd = limits.get("rpd", 0) or 0
         tpm = limits.get("tpm", 0) or 0
+
+        if state.cooldown_until > now:
+            wait_time = max(wait_time, state.cooldown_until - now)
 
         if rpm and len(state.minute_requests) >= rpm:
             wait_time = max(
@@ -180,6 +184,21 @@ class RateLimiter:
                     return
 
             await asyncio.sleep(wait_time if wait_time > 0 else 0.05)
+
+    async def register_backoff(self, model: str, delay_seconds: float) -> None:
+        """Register a server-directed backoff window for the given model."""
+
+        if delay_seconds <= 0:
+            return
+
+        limits = self._limits.get(model)
+        if not limits:
+            return
+
+        async with self._get_lock(model):
+            state = self._get_state(model)
+            now = time.monotonic()
+            state.cooldown_until = max(state.cooldown_until, now + delay_seconds)
 
 
 def estimate_tokens(*segments: Optional[str]) -> int:

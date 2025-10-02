@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Test script to verify retry logic for 503 overload errors."""
+"""Test script to verify retry logic for overload and quota errors."""
 
 import sys
 
-from backend.catalyst_ai import _calculate_retry_delay, _is_retryable_error
+from google.genai.errors import ClientError
+
+from backend.catalyst_ai import (
+    _calculate_retry_delay,
+    _is_retryable_error,
+    _parse_quota_error,
+)
 
 
 def test_error_detection():
@@ -82,3 +88,27 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n❌ Test failed: {e}")
         sys.exit(1)
+
+    def test_parse_quota_error():
+        """Ensure quota errors are parsed for retry guidance."""
+
+        payload = {
+            "error": {
+                "code": 429,
+                "message": "Quota exceeded. Please retry in 24s.",
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                        "retryDelay": "24s",
+                    }
+                ],
+            }
+        }
+
+        error = ClientError(429, payload)
+        info = _parse_quota_error(error)
+
+        assert info is not None
+        assert info.status_code == 429
+        assert info.retry_after == 24.0
+        assert "Quota" in info.message or "quota" in info.message

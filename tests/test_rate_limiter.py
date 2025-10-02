@@ -116,5 +116,19 @@ async def test_get_wait_time(rate_limiter):
     assert wait_time_fast == 0
 
 
+@pytest.mark.asyncio
+async def test_register_backoff(rate_limiter):
+    """Server-directed backoff should delay future requests."""
+
+    await rate_limiter.wait_for_request("test-model")
+    await rate_limiter.register_backoff("test-model", 0.5)
+
+    start_time = time.monotonic()
+    await rate_limiter.wait_for_request("test-model")
+    elapsed = time.monotonic() - start_time
+
+    assert elapsed >= 0.45
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

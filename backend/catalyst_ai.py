@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import random
+import re
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -28,7 +32,7 @@ from .schemas import SessionType
 from .time_utils import local_now
 
 # Retry configuration
-MAX_RETRIES = 3
+MAX_RETRIES = 4
 BASE_DELAY = 1.0  # Base delay in seconds
 MAX_DELAY = 60.0  # Maximum delay in seconds
 JITTER_RANGE = 0.1  # Jitter factor for randomization
@@ -50,6 +54,84 @@ def _is_retryable_error(error: Exception) -> bool:
         or "unavailable" in error_str
         or "try again later" in error_str
     )
+
+
+@dataclass
+class QuotaErrorInfo:
+    status_code: int
+    message: str
+    retry_after: Optional[float]
+
+
+def _parse_quota_error(error: Exception) -> Optional[QuotaErrorInfo]:
+    """Extract structured information from Gemini quota errors."""
+
+    status_code: Optional[int] = getattr(error, "status_code", None)
+    payload: Optional[Dict[str, Any]] = getattr(error, "response", None)
+
+    if status_code is None:
+        match = re.search(r"\b(\d{3})\b", str(error))
+        if match:
+            status_code = int(match.group(1))
+
+    if status_code != 429:
+        return None
+
+    error_message: Optional[str] = None
+    retry_after: Optional[float] = None
+
+    if isinstance(payload, dict):
+        error_payload = payload.get("error")
+    else:
+        error_payload = None
+
+    if error_payload is None and "{" in str(error):
+        try:
+            raw_payload = str(error)[str(error).index("{") :]
+            parsed_payload = json.loads(raw_payload)
+        except (ValueError, json.JSONDecodeError):
+            try:
+                parsed_payload = ast.literal_eval(raw_payload)
+            except (SyntaxError, ValueError):
+                parsed_payload = None
+        if isinstance(parsed_payload, dict):
+            error_payload = parsed_payload.get("error")
+
+    if isinstance(error_payload, dict):
+        error_message = error_payload.get("message") or error_message
+        details = error_payload.get("details", [])
+        for detail in details:
+            if not isinstance(detail, dict):
+                continue
+            retry_delay_value = detail.get("retryDelay") or detail.get("retry_delay")
+            if detail.get("@type", "").endswith("RetryInfo") and retry_delay_value:
+                if isinstance(retry_delay_value, (int, float)):
+                    retry_after = float(retry_delay_value)
+                elif isinstance(retry_delay_value, str):
+                    match = re.match(r"([0-9]+(?:\.[0-9]+)?)s", retry_delay_value)
+                    if match:
+                        retry_after = float(match.group(1))
+            if retry_after is None:
+                violations = detail.get("violations")
+                if isinstance(violations, list):
+                    for violation in violations:
+                        if not isinstance(violation, dict):
+                            continue
+                        hint = violation.get("description") or violation.get("message")
+                        if hint and retry_after is None:
+                            match = re.search(
+                                r"retry in\s+([0-9]+(?:\.[0-9]+)?)s", hint.lower()
+                            )
+                            if match:
+                                retry_after = float(match.group(1))
+
+    if retry_after is None:
+        match = re.search(r"retry in\s+([0-9]+(?:\.[0-9]+)?)s", str(error).lower())
+        if match:
+            retry_after = float(match.group(1))
+
+    message = error_message or "Gemini quota exceeded."
+    return QuotaErrorInfo(status_code=429, message=message, retry_after=retry_after)
 
 
 def _calculate_retry_delay(attempt: int) -> float:
@@ -138,10 +220,37 @@ async def _make_api_call_with_retry(
             return response, current_model
 
         except Exception as exc:
-            last_error = exc
+            quota_info: Optional[QuotaErrorInfo] = None
+
+            if isinstance(exc, genai_errors.ClientError):
+                quota_info = _parse_quota_error(exc)
 
             # Release reserved quota since the request failed
             await rate_limiter.record_usage(current_model, 0)
+
+            if quota_info and quota_info.retry_after:
+                await rate_limiter.register_backoff(
+                    current_model, quota_info.retry_after
+                )
+
+            if quota_info:
+                last_error = HTTPException(
+                    status_code=quota_info.status_code,
+                    detail={
+                        "error": "Gemini quota exceeded",
+                        "model": current_model,
+                        "message": quota_info.message,
+                        "retry_after_seconds": quota_info.retry_after,
+                    },
+                )
+                print(
+                    f"🚫 {context.capitalize()} call hit quota limit on {current_model}: {quota_info.message}"
+                )
+                if attempt < MAX_RETRIES - 1:
+                    continue
+                raise last_error
+
+            last_error = exc
 
             if not _is_retryable_error(exc):
                 # Non-retryable error, fail immediately
@@ -158,6 +267,9 @@ async def _make_api_call_with_retry(
                 print(f"❌ All retry attempts failed for {context} call")
 
     # All retries exhausted
+    if isinstance(last_error, HTTPException):
+        raise last_error
+
     raise HTTPException(
         status_code=503,
         detail=(
