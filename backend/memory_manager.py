@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List
 
 from sqlalchemy import desc
@@ -117,14 +118,29 @@ def extract_section(text: str, section_name: str) -> str:
     lines = text.split("\n")
     section_lines: List[str] = []
     in_section = False
+    target = section_name.lower().strip()
+
+    heading_patterns = [
+        re.compile(r"^\s*#{1,6}\s+.+"),
+        re.compile(r"^\s*\*\*.+?\*\*\s*:?.*$"),
+        re.compile(r"^\s*[A-Za-z][\w\s&'\-\/]+\s*:\s*$"),
+    ]
+
+    def _is_heading(candidate: str) -> bool:
+        return any(pattern.match(candidate) for pattern in heading_patterns)
 
     for line in lines:
-        if section_name.lower() in line.lower() and not in_section:
-            in_section = True
+        stripped = line.strip()
+
+        if not in_section:
+            if stripped and target in stripped.lower() and _is_heading(stripped):
+                in_section = True
             continue
-        if in_section and line.strip() and not line.startswith("#"):
-            section_lines.append(line)
-        elif in_section and line.startswith("#"):
+
+        if _is_heading(stripped) and target not in stripped.lower():
             break
 
-    return "\n".join(section_lines[:10])
+        if stripped or section_lines:
+            section_lines.append(line)
+
+    return "\n".join(section_lines[:10]).strip()

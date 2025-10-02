@@ -418,6 +418,7 @@ async def update_ltm_memory(
        - Breakthroughs & Wins
        - Personality Traits
        - Current State & Momentum
+     6. Format each section with a Markdown H2 heading (e.g., "## Key Patterns") matching the names above exactly.
 
     Be concise but insightful. Focus on what will be most useful for future interactions.
     """

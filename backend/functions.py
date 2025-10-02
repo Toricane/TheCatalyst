@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 from google.genai import types
 from sqlalchemy import func
@@ -21,6 +21,25 @@ _SECTION_ALIASES: Dict[str, List[str]] = {
     "personality": ["personality traits", "personality"],
     "current_state": ["current state & momentum", "current state", "momentum"],
 }
+
+_HEADING_PATTERNS = [
+    re.compile(r"^#{1,6}\s+(?P<heading>.+?)\s*$"),
+    re.compile(r"^\*\*(?P<heading>.+?)\*\*\s*:?\s*$"),
+    re.compile(r"^(?P<heading>[A-Za-z][\w\s&'\-\/]+)\s*:\s*$"),
+]
+
+
+def _match_heading(line: str) -> Optional[str]:
+    stripped = line.strip()
+    if not stripped:
+        return None
+    for pattern in _HEADING_PATTERNS:
+        match = pattern.match(stripped)
+        if match:
+            heading = match.group("heading").strip()
+            if heading:
+                return heading
+    return None
 
 
 def _strip_code_fences(text: str | None) -> str:
@@ -44,7 +63,6 @@ def _extract_profile_sections(text: str) -> Dict[str, str]:
     if not text:
         return {}
 
-    heading_pattern = re.compile(r"^#{1,6}\s+(.*)$")
     current_heading: str | None = None
     buffer: List[str] = []
     collected: Dict[str, str] = {}
@@ -62,11 +80,10 @@ def _extract_profile_sections(text: str) -> Dict[str, str]:
                 break
 
     for raw_line in text.splitlines():
-        line = raw_line.rstrip()
-        heading_match = heading_pattern.match(line.strip())
-        if heading_match:
+        heading_candidate = _match_heading(raw_line)
+        if heading_candidate is not None:
             _flush_buffer(current_heading)
-            current_heading = heading_match.group(1).strip()
+            current_heading = heading_candidate
             buffer = []
             continue
 

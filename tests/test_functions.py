@@ -186,3 +186,56 @@ def test_function_calling():
 
 if __name__ == "__main__":
     test_function_calling()
+
+
+def test_update_ltm_profile_handles_bold_headings():
+    """Ensure bold-style headings are parsed into structured sections."""
+
+    temp_dir = Path(tempfile.mkdtemp(prefix="catalyst-test-db-"))
+    temp_db_path = temp_dir / "catalyst_test.db"
+    original_db_url = os.environ.get("DATABASE_URL")
+    database_module: ModuleType | None = None
+
+    try:
+        os.environ["DATABASE_URL"] = f"sqlite:///{temp_db_path.as_posix()}"
+
+        _, database_module, models_module, functions_module = _reload_backend_modules()
+        database_module.init_database()
+
+        bold_profile = (
+            "**Updated Memory Synthesis**\n\n"
+            "**Overview & North Star**\n"
+            "- Driving toward Engineering Physics transfer.\n\n"
+            "**Key Patterns**\n"
+            "- Consistently reflects on academic performance.\n"
+            "- Values deep collaboration with peers.\n\n"
+            "**Recurring Challenges**\n"
+            "- Underestimating time required for major tasks.\n\n"
+            "**Breakthroughs & Wins**\n"
+            "- Reframed The Catalyst around human-first impact.\n\n"
+            "**Personality Traits**\n"
+            "- Ambitious, reflective, and socially driven.\n\n"
+            "**Current State & Momentum**\n"
+            "- Momentum strong; focus on improving time forecasting.\n"
+        )
+
+        functions_module.catalyst_functions["update_ltm_profile"](
+            profile_content=bold_profile
+        )
+
+        with database_module.SessionLocal() as session:
+            profile = (
+                session.query(models_module.LTMProfile)
+                .order_by(models_module.LTMProfile.version.desc())
+                .first()
+            )
+
+            assert profile is not None
+            assert "reflects on academic" in (profile.patterns_section or "").lower()
+            assert "underestimating time" in (profile.challenges_section or "").lower()
+            assert "human-first impact" in (profile.breakthroughs_section or "").lower()
+            assert "socially driven" in (profile.personality_section or "").lower()
+            assert "time forecasting" in (profile.current_state_section or "").lower()
+
+    finally:
+        _cleanup_test_database(temp_dir, temp_db_path, original_db_url, database_module)
