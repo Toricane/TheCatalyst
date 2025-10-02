@@ -47,8 +47,8 @@ let pendingInitialGreeting = null;
 
 function determineSessionTypeByLocalTime() {
     const hour = new Date().getHours();
-    if (hour >= 5 && hour < 12) return "morning";
-    if (hour >= 18 && hour < 23) return "evening";
+    if (hour >= 4 && hour < 10) return "morning";
+    if (hour >= 20 && hour < 24) return "evening";
     return "general";
 }
 
