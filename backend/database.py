@@ -10,16 +10,18 @@ from typing import Any, Dict, Iterator, Optional
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, declarative_base, scoped_session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from .config import DATABASE_URL
 
-engine = create_engine(
-    DATABASE_URL,
-    # SQLite requires this flag when used with FastAPI / multithreading
-    connect_args={"check_same_thread": False}
-    if DATABASE_URL.startswith("sqlite")
-    else {},
-)
+if DATABASE_URL.startswith("sqlite"):
+    connect_args = {"check_same_thread": False}
+    engine_kwargs = {}
+    if ":memory:" in DATABASE_URL:
+        engine_kwargs["poolclass"] = StaticPool
+    engine = create_engine(DATABASE_URL, connect_args=connect_args, **engine_kwargs)
+else:
+    engine = create_engine(DATABASE_URL)
 
 SessionLocal = scoped_session(
     sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
@@ -163,5 +165,4 @@ def get_session() -> Iterator[Session]:
         session.rollback()
         raise
     finally:
-        session.close()
         session.close()

@@ -45,11 +45,14 @@ const conversationSummary = document.getElementById("conversationSummary");
 const conversationContextMenu = document.getElementById(
     "conversationContextMenu"
 );
-const readonlyBanner = document.getElementById("readonlyBanner");
+
 const newConversationButton = document.getElementById("newConversationButton");
+const sidebarToggle = document.getElementById("sidebarToggle");
+const sidebar = document.getElementById("sidebar");
 const messageInput = document.getElementById("messageInput");
 const sendButton = document.getElementById("sendButton");
-const previewButton = document.getElementById("previewButton");
+const previewToggle = document.getElementById("previewToggle");
+const inputPreviewPanel = document.getElementById("inputPreviewPanel");
 const previewModal = document.getElementById("previewModal");
 const previewContent = document.getElementById("previewContent");
 const closePreviewBtn = document.getElementById("closePreviewBtn");
@@ -100,8 +103,7 @@ function formatTimestamp(value) {
 function formatConversationTitle(meta) {
     if (!meta) return "Conversation";
     const primaryLabel = formatSessionLabel(meta.session_types?.[0]);
-    const updatedLabel = formatTimestamp(meta.updated_at);
-    return updatedLabel ? `${primaryLabel} • ${updatedLabel}` : primaryLabel;
+    return primaryLabel;
 }
 
 function setConversationSummary(meta) {
@@ -296,9 +298,20 @@ function setActiveSession(session) {
 function appendMessage(role, text, options = {}) {
     const article = document.createElement("article");
     article.className = `message ${role}`;
+    const avatar = document.createElement("div");
+    avatar.className = "message-avatar";
 
-    const wrapper = document.createElement("div");
-    wrapper.className = "message-wrapper";
+    const avatarIcon = {
+        user: "👤",
+        catalyst: "🤖",
+        assistant: "🤖",
+        system: "🛰️",
+        tool: "🛠️",
+    };
+    avatar.textContent = avatarIcon[role] || "💬";
+
+    const content = document.createElement("div");
+    content.className = "message-content";
 
     const { model, timestamp, sessionType, skipScroll = false } = options;
     const metaParts = [];
@@ -311,15 +324,16 @@ function appendMessage(role, text, options = {}) {
         const meta = document.createElement("div");
         meta.className = "message-meta";
         meta.textContent = metaParts.join(" • ");
-        wrapper.appendChild(meta);
+        content.appendChild(meta);
     }
 
     const body = document.createElement("div");
     body.className = "message-body";
     body.innerHTML = renderMarkdown(text);
 
-    wrapper.appendChild(body);
-    article.appendChild(wrapper);
+    content.appendChild(body);
+    article.appendChild(avatar);
+    article.appendChild(content);
     chatFeed.appendChild(article);
 
     if (skipScroll) {
@@ -357,7 +371,7 @@ function setSending(state) {
     const disableInputs = state || isReadOnlyConversation;
     sendButton.disabled = disableInputs;
     messageInput.disabled = disableInputs;
-    previewButton.disabled = disableInputs;
+    if (previewToggle) previewToggle.disabled = disableInputs;
     if (newConversationButton) {
         newConversationButton.disabled = state;
     }
@@ -366,21 +380,20 @@ function setSending(state) {
 
 function setReadOnlyMode(state) {
     isReadOnlyConversation = state;
-    if (readonlyBanner) {
-        readonlyBanner.hidden = !state;
-    }
     const disableInputs = state || isSending;
     sendButton.disabled = disableInputs;
     messageInput.disabled = disableInputs;
-    previewButton.disabled = disableInputs;
+    if (previewToggle) previewToggle.disabled = disableInputs;
     if (state) {
         latestConversationDraft = messageInput.value;
         messageInput.value = "";
         autoResizeTextarea();
+        updateInlinePreview();
     } else {
         if (messageInput.value !== latestConversationDraft) {
             messageInput.value = latestConversationDraft;
             autoResizeTextarea();
+            updateInlinePreview();
         }
         if (!isSending) {
             messageInput.focus();
@@ -463,11 +476,6 @@ function renderConversationList() {
         item.append(title, snippet);
 
         const metaParts = [];
-        if (meta.session_types?.length) {
-            metaParts.push(
-                meta.session_types.map(formatSessionLabel).join(", ")
-            );
-        }
         if (meta.updated_at) {
             metaParts.push(formatTimestamp(meta.updated_at));
         }
@@ -715,27 +723,69 @@ function handleSessionClick(event) {
     setActiveSession(button.dataset.session);
 }
 
-function showPreview() {
-    const text = messageInput.value.trim();
-    if (!text) {
-        previewContent.innerHTML =
-            '<p style="color: #94a3b8; font-style: italic;">Nothing to preview yet...</p>';
+function autoResizeTextarea() {
+    messageInput.style.height = "auto";
+    const scrollHeight = messageInput.scrollHeight;
+    const minHeight = 44; // ~2.75rem in pixels
+    const maxHeight = 200;
+
+    if (scrollHeight > minHeight) {
+        messageInput.classList.add("multiline");
+        messageInput.style.height = `${Math.min(scrollHeight, maxHeight)}px`;
     } else {
-        previewContent.innerHTML = renderMarkdown(text);
+        messageInput.classList.remove("multiline");
+        messageInput.style.height = `${minHeight}px`;
     }
-    previewModal.showModal();
+}
+
+function handleInputChange() {
+    autoResizeTextarea();
+    updateInlinePreview();
+}
+
+let isPreviewVisible = false;
+
+function toggleInlinePreview() {
+    isPreviewVisible = !isPreviewVisible;
+    previewToggle.classList.toggle("active", isPreviewVisible);
+    inputPreviewPanel.classList.toggle("active", isPreviewVisible);
+
+    if (isPreviewVisible) {
+        updateInlinePreview();
+    }
+}
+
+function updateInlinePreview() {
+    if (!isPreviewVisible) return;
+
+    const text = messageInput.value.trim();
+    if (text) {
+        inputPreviewPanel.innerHTML = renderMarkdown(text);
+    } else {
+        inputPreviewPanel.innerHTML =
+            '<em style="color: var(--text-muted);">Preview will appear here...</em>';
+    }
+}
+
+function showPreview() {
+    // Fallback for modal preview if it exists
+    if (previewModal && previewContent) {
+        const text = messageInput.value.trim();
+        if (!text) {
+            previewContent.innerHTML =
+                '<em style="color: #64748b;">Nothing to preview...</em>';
+        } else {
+            previewContent.innerHTML = renderMarkdown(text);
+        }
+        previewModal.showModal();
+    }
 }
 
 function closePreview() {
-    previewModal.close();
+    if (previewModal) {
+        previewModal.close();
+    }
     messageInput.focus();
-}
-
-function autoResizeTextarea() {
-    messageInput.style.height = "auto";
-    const maxHeight = parseInt(getComputedStyle(messageInput).maxHeight);
-    const newHeight = Math.min(messageInput.scrollHeight, maxHeight);
-    messageInput.style.height = newHeight + "px";
 }
 
 function bindEvents() {
@@ -751,16 +801,21 @@ function bindEvents() {
     });
 
     // Auto-resize textarea as user types
-    messageInput.addEventListener("input", autoResizeTextarea);
+    messageInput.addEventListener("input", handleInputChange);
 
-    // Preview functionality
-    previewButton.addEventListener("click", showPreview);
-    closePreviewBtn.addEventListener("click", closePreview);
-    editButton.addEventListener("click", closePreview);
-    sendFromPreviewButton.addEventListener("click", () => {
-        previewModal.close();
-        sendMessage();
-    });
+    // Inline preview toggle
+    previewToggle.addEventListener("click", toggleInlinePreview);
+
+    // Keep old modal functionality for compatibility
+    if (closePreviewBtn)
+        closePreviewBtn.addEventListener("click", closePreview);
+    if (editButton) editButton.addEventListener("click", closePreview);
+    if (sendFromPreviewButton) {
+        sendFromPreviewButton.addEventListener("click", () => {
+            previewModal.close();
+            sendMessage();
+        });
+    }
 
     // Close preview modal when clicking outside
     previewModal.addEventListener("click", (event) => {
@@ -817,6 +872,20 @@ function bindEvents() {
         newConversationButton.addEventListener("click", (event) => {
             event.preventDefault();
             startNewConversation();
+        });
+    }
+
+    if (sidebarToggle && sidebar) {
+        sidebarToggle.addEventListener("click", (event) => {
+            event.preventDefault();
+            sidebar.classList.toggle("collapsed");
+            const isCollapsed = sidebar.classList.contains("collapsed");
+            sidebarToggle.innerHTML = `<span aria-hidden="true">${
+                isCollapsed ? "▶" : "◀"
+            }</span>`;
+            sidebarToggle.title = isCollapsed
+                ? "Expand sidebar"
+                : "Collapse sidebar";
         });
     }
 

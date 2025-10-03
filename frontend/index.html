@@ -7,71 +7,101 @@
         <link rel="stylesheet" href="./style.css">
     </head>
     <body>
-        <div class="app-shell">
+        <div class="app-frame">
             <header class="header">
-                <h1>🔥 The Catalyst</h1>
-                <p class="subtitle">Your personal AI mentor for audacious goals and relentless execution.</p>
-                <div class="goal-display" id="goalDisplay">Checking for your North Star...</div>
-            </header>
-            <div class="workspace-grid">
-                <aside class="conversation-panel" aria-label="Conversation history">
-                    <div class="conversation-header">
-                        <h2>Conversations</h2>
-                        <button id="newConversationButton" type="button" class="new-conversation-btn">
-                            ＋ New
+                <div class="header-content">
+                    <div class="brand">
+                        <div class="logo" aria-hidden="true">🔥</div>
+                        <div class="brand-labels">
+                            <h1>The Catalyst</h1>
+                            <p class="subtitle">AI mentor for ambitious builders.</p>
+                        </div>
+                    </div>
+                    <div class="goal-badge">
+                        <span class="goal-badge-icon" aria-hidden="true">🎯</span>
+                        <span class="goal-text" id="goalDisplay">Checking for your North Star...</span>
+                    </div>
+                    <div class="header-actions">
+                        <button class="btn-header" type="button">
+                            <span aria-hidden="true">📊</span>
+                            <span>Stats</span>
+                        </button>
+                        <button class="btn-header" type="button">
+                            <span aria-hidden="true">⚙️</span>
+                            <span>Settings</span>
                         </button>
                     </div>
-                    <div class="conversation-list" id="conversationList" role="list"></div>
+                </div>
+            </header>
+            <div class="main-container">
+                <aside class="sidebar" id="sidebar" aria-label="Conversation history">
+                    <div class="sidebar-header">
+                        <h2 class="sidebar-title">Conversations</h2>
+                        <div class="sidebar-actions">
+                            <button
+                                id="sidebarToggle"
+                                type="button"
+                                class="btn-collapse"
+                                title="Collapse sidebar"
+                            >
+                                <span aria-hidden="true">◀</span>
+                            </button>
+                            <button id="newConversationButton" type="button" class="btn-new-chat">
+                                <span aria-hidden="true">+</span>
+                                <span>New</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="conversations-list" id="conversationList" role="list"></div>
                     <p class="conversation-empty" id="conversationEmpty" hidden>
                         No conversations yet. Start a new one to ignite momentum.
                     </p>
                 </aside>
-                <div class="chat-column">
-                    <main class="chat-shell">
-                        <div class="conversation-summary" id="conversationSummary"></div>
-                        <section class="chat-feed" id="chatFeed">
-                            <!-- Messages render here dynamically --></section>
-                        <div class="typing-indicator" id="typingIndicator" aria-hidden="true">
-                            <span></span>
-                            <span></span>
-                            <span></span>
-                        </div>
-                    </main>
-                    <footer class="input-panel">
-                        <div class="readonly-banner" id="readonlyBanner" hidden>
-                            You're viewing a previous conversation. Start a new conversation to continue.
-                        </div>
-                        <div class="session-toggle" role="radiogroup" aria-label="Session type">
+                <section class="chat-container">
+                    <div class="chat-header">
+                        <div class="session-type" role="radiogroup" aria-label="Session type">
                             <button class="session-btn" data-session="morning">🌅 Morning</button>
                             <button class="session-btn active" data-session="general">💬 General</button>
                             <button class="session-btn" data-session="evening">🌙 Evening</button>
                         </div>
-                        <div class="input-container">
-                            <div class="input-toolbar">
-                                <button
-                                    id="previewButton"
-                                    type="button"
-                                    class="toolbar-btn"
-                                    title="Preview markdown"
-                                >
-                                    👁️ Preview
-                                </button>
-                                <div class="input-info">
-                                    <span class="shortcut-hint">Shift+Enter for new line • Ctrl+Enter to send</span>
-                                </div>
-                            </div>
+                        <div class="chat-info">
+                            <span id="conversationSummary"></span>
+                        </div>
+                    </div>
+                    <div class="chat-pane">
+                        <section class="chat-messages" id="chatFeed">
+                            <!-- Messages render here dynamically --></section>
+                        <div class="typing-indicator" id="typingIndicator" aria-hidden="true">
+                            <div class="typing-dot"></div>
+                            <div class="typing-dot"></div>
+                            <div class="typing-dot"></div>
+                        </div>
+                    </div>
+                    <footer class="input-panel">
+                        <div class="input-wrapper">
+                            <div class="input-preview-panel" id="inputPreviewPanel"></div>
                             <div class="input-row">
                                 <textarea
                                     id="messageInput"
-                                    placeholder="Type your message... (supports Markdown)"
+                                    placeholder="Shift+Enter for new line • Ctrl+Enter to send"
                                     autocomplete="off"
-                                    rows="3"
+                                    rows="1"
                                 ></textarea>
-                                <button id="sendButton" type="button">Send</button>
+                                <button
+                                    id="previewToggle"
+                                    type="button"
+                                    class="input-preview-toggle"
+                                    title="Toggle markdown preview"
+                                >
+                                    👁️
+                                </button>
+                                <button id="sendButton" type="button" class="btn-send">
+                                    Send
+                                </button>
                             </div>
                         </div>
                     </footer>
-                </div>
+                </section>
             </div>
         </div>
         <dialog class="modal" id="initModal">
