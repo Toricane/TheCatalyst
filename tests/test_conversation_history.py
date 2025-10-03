@@ -107,3 +107,90 @@ def test_delete_conversation_removes_history_entries():
         second_delete = client.delete(f"/conversations/{conversation_id}")
         assert second_delete.status_code == 404
         assert second_delete.json().get("detail") == "Conversation not found"
+
+
+def test_chat_does_not_duplicate_initial_greeting(monkeypatch):
+    _clear_conversations()
+    existing_conversation_id = str(uuid.uuid4())
+    greeting_payload = {
+        "user": None,
+        "catalyst": "Hello from The Catalyst.",
+        "timestamp": "2025-10-02T19:38:56.123305+00:00",
+        "function_calls": [],
+        "model": "test-model",
+        "initial_greeting": True,
+        "conversation_id": existing_conversation_id,
+        "is_conversation_start": True,
+    }
+
+    session = SessionLocal()
+    try:
+        session.add(
+            models.Goal(
+                description="Test goal",
+                metric="",
+                timeline="",
+                rank=1,
+            )
+        )
+        session.flush()
+        session.add(
+            models.Conversation(
+                conversation_uuid=existing_conversation_id,
+                session_type="general",
+                messages=json.dumps(greeting_payload),
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    async def _fake_generate_catalyst_response(*_args, **_kwargs):
+        return {
+            "response": "Mock assistant reply.",
+            "memory_updated": False,
+            "function_calls": [],
+            "model": "mock-model",
+        }
+
+    monkeypatch.setattr(
+        "backend.app.generate_catalyst_response",
+        _fake_generate_catalyst_response,
+    )
+
+    payload = {
+        "message": "First user message",
+        "session_type": "general",
+        "conversation_id": existing_conversation_id,
+        "initial_greeting": {
+            "text": greeting_payload["catalyst"],
+            "session_type": "general",
+            "timestamp": greeting_payload["timestamp"],
+            "model": greeting_payload["model"],
+            "conversation_id": existing_conversation_id,
+        },
+    }
+
+    with client_context() as client:
+        response = client.post("/chat", json=payload)
+        assert response.status_code == 200
+        response_data = response.json()
+        assert response_data.get("conversation_id") == existing_conversation_id
+
+    session = SessionLocal()
+    try:
+        records = (
+            session.query(models.Conversation)
+            .filter(models.Conversation.conversation_uuid == existing_conversation_id)
+            .all()
+        )
+        assert len(records) == 2
+
+        greeting_count = 0
+        for record in records:
+            stored_payload = json.loads(record.messages or "{}")
+            if stored_payload.get("initial_greeting"):
+                greeting_count += 1
+        assert greeting_count == 1
+    finally:
+        session.close()

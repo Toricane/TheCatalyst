@@ -597,24 +597,51 @@ async def chat_with_catalyst(
     memory_updated = response["memory_updated"]
 
     if greeting_payload and greeting_payload.text and greeting_session_value:
-        greeting_record = models.Conversation(
-            session_type=greeting_session_value,
-            conversation_uuid=greeting_payload.conversation_id,
-            messages=json.dumps(
-                {
-                    "user": None,
-                    "catalyst": greeting_payload.text,
-                    "timestamp": greeting_timestamp or utc_now().isoformat(),
-                    "function_calls": [],
-                    "model": greeting_payload.model,
-                    "initial_greeting": True,
-                    "conversation_id": greeting_payload.conversation_id,
-                    "is_conversation_start": True,
-                }
-            ),
-            thinking_log="",
-        )
-        db.add(greeting_record)
+        greeting_conversation_id = greeting_payload.conversation_id or conversation_id
+        greeting_timestamp_value = greeting_timestamp or utc_now().isoformat()
+
+        greeting_already_saved = False
+        if greeting_conversation_id:
+            existing_greetings = (
+                db.query(models.Conversation)
+                .filter(
+                    models.Conversation.conversation_uuid == greeting_conversation_id
+                )
+                .all()
+            )
+            for existing in existing_greetings:
+                try:
+                    existing_payload = (
+                        json.loads(existing.messages) if existing.messages else {}
+                    )
+                except json.JSONDecodeError:
+                    existing_payload = {}
+                if existing_payload.get("initial_greeting"):
+                    greeting_already_saved = True
+                    break
+
+        if not greeting_already_saved:
+            greeting_record = models.Conversation(
+                session_type=greeting_session_value,
+                conversation_uuid=greeting_conversation_id,
+                messages=json.dumps(
+                    {
+                        "user": None,
+                        "catalyst": greeting_payload.text,
+                        "timestamp": greeting_timestamp_value,
+                        "function_calls": [],
+                        "model": greeting_payload.model,
+                        "initial_greeting": True,
+                        "conversation_id": greeting_conversation_id,
+                        "is_conversation_start": True,
+                    }
+                ),
+                thinking_log="",
+            )
+            db.add(greeting_record)
+
+        greeting_payload.conversation_id = greeting_conversation_id
+        greeting_timestamp = greeting_timestamp_value
         created_new_conversation = False
 
     conversation = models.Conversation(
