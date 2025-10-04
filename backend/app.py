@@ -517,7 +517,7 @@ async def chat_with_catalyst(
     recent_records = (
         db.query(models.Conversation)
         .order_by(models.Conversation.created_at.desc())
-        .limit(8)
+        # .limit(8)
         .all()
     )
 
