@@ -690,11 +690,15 @@ async def chat_with_catalyst(
 
     insights = get_recent_insights(db)
 
+    recent_cutoff = utc_now() - timedelta(hours=48)
     recent_records = (
         db.query(models.Conversation)
+        .filter(models.Conversation.created_at >= recent_cutoff)
         .order_by(models.Conversation.created_at.desc())
         .all()
     )
+
+    current_time = local_now()
 
     raw_entries: List[Dict[str, Any]] = []
     for record in reversed(recent_records):
@@ -728,42 +732,45 @@ async def chat_with_catalyst(
             }
         )
 
-    recent_conversations: List[Dict[str, Any]] = []
-    context_sources: List[Dict[str, Any]] = []
-    pending_greetings: List[Dict[str, Any]] = []
+    def _entry_length(entry: Dict[str, Any]) -> int:
+        return len(entry.get("user") or "") + len(entry.get("catalyst") or "")
+
+    def _make_conversation_item(
+        entry: Dict[str, Any], source: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        return {
+            "entry": entry,
+            "source": source,
+            "created": _parse_iso_timestamp(entry.get("timestamp")),
+        }
+
+    conversation_items: List[Dict[str, Any]] = []
+    pending_greeting_items: List[Dict[str, Any]] = []
     user_message_seen = False
 
     for item in raw_entries:
+        entry = item["entry"]
+        source = {"type": "record", "record_id": item["record_id"]}
+        conversation_item = _make_conversation_item(entry, source)
+
         if item["is_initial_greeting"]:
             if user_message_seen:
-                recent_conversations.append(item["entry"])
-                context_sources.append(
-                    {"type": "record", "record_id": item["record_id"]}
-                )
+                conversation_items.append(conversation_item)
             else:
-                pending_greetings.append(item)
+                pending_greeting_items.append(conversation_item)
             continue
 
-        if pending_greetings:
-            for pending in pending_greetings:
-                recent_conversations.append(pending["entry"])
-                context_sources.append(
-                    {"type": "record", "record_id": pending["record_id"]}
-                )
-            pending_greetings = []
+        if pending_greeting_items:
+            conversation_items.extend(pending_greeting_items)
+            pending_greeting_items = []
 
         if item["has_user_text"]:
             user_message_seen = True
 
-        recent_conversations.append(item["entry"])
-        context_sources.append({"type": "record", "record_id": item["record_id"]})
+        conversation_items.append(conversation_item)
 
-    if user_message_seen and pending_greetings:
-        for pending in pending_greetings:
-            recent_conversations.append(pending["entry"])
-            context_sources.append(
-                {"type": "record", "record_id": pending["record_id"]}
-            )
+    if user_message_seen and pending_greeting_items:
+        conversation_items.extend(pending_greeting_items)
 
     greeting_payload = message.initial_greeting
     greeting_session_value: Optional[str] = None
@@ -787,8 +794,44 @@ async def chat_with_catalyst(
             "conversation_id": conversation_id,
             "initial_greeting": True,
         }
-        recent_conversations.append(inline_entry)
-        context_sources.append({"type": "inline", "entry": dict(inline_entry)})
+        conversation_items.append(
+            _make_conversation_item(
+                inline_entry, {"type": "inline", "entry": dict(inline_entry)}
+            )
+        )
+
+    total_chars = sum(_entry_length(item["entry"]) for item in conversation_items)
+    if total_chars > RECENT_CONVERSATION_CHAR_LIMIT:
+        twenty_four_hours_ago = current_time - timedelta(hours=24)
+        filtered_items = [
+            item
+            for item in conversation_items
+            if item["created"] and item["created"] >= twenty_four_hours_ago
+        ]
+        if filtered_items:
+            conversation_items = filtered_items
+            total_chars = sum(
+                _entry_length(item["entry"]) for item in conversation_items
+            )
+
+        if total_chars > RECENT_CONVERSATION_CHAR_LIMIT and conversation_items:
+            trimmed_items: List[Dict[str, Any]] = []
+            running_total = 0
+            for item in reversed(conversation_items):
+                entry_length = _entry_length(item["entry"])
+                if (
+                    running_total + entry_length > RECENT_CONVERSATION_CHAR_LIMIT
+                    and trimmed_items
+                ):
+                    continue
+                trimmed_items.append(item)
+                running_total += entry_length
+                if running_total >= RECENT_CONVERSATION_CHAR_LIMIT:
+                    break
+            conversation_items = list(reversed(trimmed_items))
+
+    recent_conversations = [item["entry"] for item in conversation_items]
+    context_sources = [item["source"] for item in conversation_items]
 
     context = {
         "goals": goals,
