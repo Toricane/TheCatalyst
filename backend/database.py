@@ -2,30 +2,66 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterator, Optional
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, declarative_base, scoped_session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from .config import DATABASE_URL
 
+
+def _session_scope_identifier() -> Any:
+    """Resolve a scoped session identifier that works for async and sync contexts."""
+
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+
+    if task is not None:
+        return task
+
+    return threading.get_ident()
+
+
+engine_kwargs: Dict[str, Any] = {"pool_pre_ping": True}
+
 if DATABASE_URL.startswith("sqlite"):
-    connect_args = {"check_same_thread": False}
-    engine_kwargs = {}
+    connect_args = {"check_same_thread": False, "timeout": 30}
     if ":memory:" in DATABASE_URL:
         engine_kwargs["poolclass"] = StaticPool
+
     engine = create_engine(DATABASE_URL, connect_args=connect_args, **engine_kwargs)
+
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragma(dbapi_connection, connection_record):  # type: ignore[override]
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.close()
 else:
-    engine = create_engine(DATABASE_URL)
+    engine = create_engine(DATABASE_URL, **engine_kwargs)
 
 SessionLocal = scoped_session(
-    sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
+    sessionmaker(
+        bind=engine, autocommit=False, autoflush=False, expire_on_commit=False
+    ),
+    scopefunc=_session_scope_identifier,
 )
+
+_MAX_COMMIT_RETRIES = 5
+_RETRY_BACKOFF_SECONDS = 0.2
 
 Base = declarative_base()
 
@@ -64,7 +100,7 @@ def _ensure_conversation_schema() -> None:
         if needs_backfill:
             _backfill_conversation_threads(session)
     finally:
-        session.close()
+        SessionLocal.remove()
 
 
 def _parse_iso(value: Optional[str]) -> Optional[datetime]:
@@ -160,9 +196,26 @@ def get_session() -> Iterator[Session]:
     session: Session = SessionLocal()
     try:
         yield session
-        session.commit()
+        for attempt in range(_MAX_COMMIT_RETRIES):
+            try:
+                session.commit()
+                break
+            except OperationalError as exc:
+                message = str(exc).lower()
+                if (
+                    "database is locked" not in message
+                    and "database table is locked" not in message
+                ):
+                    raise
+
+                session.rollback()
+
+                if attempt == _MAX_COMMIT_RETRIES - 1:
+                    raise
+
+                time.sleep(_RETRY_BACKOFF_SECONDS * (attempt + 1))
     except Exception:
         session.rollback()
         raise
     finally:
-        session.close()
+        SessionLocal.remove()
