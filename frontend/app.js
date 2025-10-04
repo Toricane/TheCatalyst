@@ -45,6 +45,11 @@ const conversationSummary = document.getElementById("conversationSummary");
 const conversationContextMenu = document.getElementById(
     "conversationContextMenu"
 );
+const messageContextMenu = document.getElementById("messageContextMenu");
+const systemContextModal = document.getElementById("systemContextModal");
+const systemContextContent = document.getElementById("systemContextContent");
+const closeSystemContextBtn = document.getElementById("closeSystemContextBtn");
+const copySystemContextBtn = document.getElementById("copySystemContextBtn");
 
 const newConversationButton = document.getElementById("newConversationButton");
 const sidebarToggle = document.getElementById("sidebarToggle");
@@ -76,6 +81,13 @@ const conversationCache = new Map();
 let latestConversationDraft = "";
 let contextMenuTargetId = null;
 let contextMenuTargetElement = null;
+let messageContextTargetElement = null;
+const messageDebugData = new WeakMap();
+let currentDebugClipboardText = "";
+
+if (copySystemContextBtn) {
+    copySystemContextBtn.disabled = true;
+}
 
 function determineSessionTypeByLocalTime() {
     const hour = new Date().getHours();
@@ -124,6 +136,67 @@ function setConversationSummary(meta) {
     conversationSummary.hidden = parts.length === 0;
 }
 
+function normalizeDebugInfo(raw) {
+    if (!raw) return null;
+
+    const systemPromptSource =
+        typeof raw.system_prompt === "string"
+            ? raw.system_prompt
+            : typeof raw.systemPrompt === "string"
+            ? raw.systemPrompt
+            : "";
+
+    let contextSnapshot =
+        raw.context_snapshot !== undefined
+            ? raw.context_snapshot
+            : raw.contextSnapshot !== undefined
+            ? raw.contextSnapshot
+            : null;
+
+    if (typeof contextSnapshot === "string") {
+        const trimmed = contextSnapshot.trim();
+        if (
+            (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+            (trimmed.startsWith("[") && trimmed.endsWith("]"))
+        ) {
+            try {
+                contextSnapshot = JSON.parse(trimmed);
+            } catch (error) {
+                // Keep original string if parsing fails
+            }
+        }
+    }
+
+    const hasPrompt =
+        typeof systemPromptSource === "string" &&
+        systemPromptSource.trim().length > 0;
+
+    const hasContext = (() => {
+        if (contextSnapshot === null || contextSnapshot === undefined) {
+            return false;
+        }
+        if (Array.isArray(contextSnapshot)) {
+            return contextSnapshot.length > 0;
+        }
+        if (typeof contextSnapshot === "object") {
+            return Object.keys(contextSnapshot).length > 0;
+        }
+        if (typeof contextSnapshot === "string") {
+            return contextSnapshot.trim().length > 0;
+        }
+        return true;
+    })();
+
+    if (!hasPrompt && !hasContext) {
+        return null;
+    }
+
+    return {
+        systemPrompt: hasPrompt ? systemPromptSource : "",
+        contextSnapshot,
+    };
+}
+
 function closeConversationContextMenu() {
     if (conversationContextMenu && !conversationContextMenu.hidden) {
         conversationContextMenu.hidden = true;
@@ -140,6 +213,8 @@ function closeConversationContextMenu() {
 
 function openConversationContextMenu(x, y, conversationId, triggerElement) {
     if (!conversationContextMenu || !conversationId) return;
+
+    closeMessageContextMenu();
 
     if (
         contextMenuTargetElement &&
@@ -180,6 +255,77 @@ function openConversationContextMenu(x, y, conversationId, triggerElement) {
     conversationContextMenu.style.top = `${posY}px`;
 
     const focusable = conversationContextMenu.querySelector("button");
+    if (focusable) {
+        focusable.focus();
+    }
+}
+
+function closeMessageContextMenu() {
+    if (messageContextMenu && !messageContextMenu.hidden) {
+        messageContextMenu.hidden = true;
+        messageContextMenu.setAttribute("aria-hidden", "true");
+        messageContextMenu.style.removeProperty("left");
+        messageContextMenu.style.removeProperty("top");
+    }
+    if (messageContextTargetElement) {
+        messageContextTargetElement.classList.remove("menu-open");
+        messageContextTargetElement = null;
+    }
+}
+
+function openMessageContextMenu(x, y, messageElement) {
+    if (!messageContextMenu || !messageElement) return;
+
+    closeConversationContextMenu();
+
+    if (
+        messageContextTargetElement &&
+        messageContextTargetElement !== messageElement
+    ) {
+        messageContextTargetElement.classList.remove("menu-open");
+    }
+
+    messageContextTargetElement = messageElement;
+    messageContextTargetElement.classList.add("menu-open");
+
+    const debugInfo = messageDebugData.get(messageElement) || null;
+    const viewButton = messageContextMenu.querySelector(
+        "button[data-action='view-debug']"
+    );
+    const debugAvailable = Boolean(debugInfo);
+    if (viewButton) {
+        viewButton.disabled = !debugAvailable;
+        viewButton.setAttribute(
+            "aria-disabled",
+            debugAvailable ? "false" : "true"
+        );
+    }
+
+    messageContextMenu.hidden = false;
+    messageContextMenu.setAttribute("aria-hidden", "false");
+    messageContextMenu.style.left = "0px";
+    messageContextMenu.style.top = "0px";
+
+    const rect = messageContextMenu.getBoundingClientRect();
+    const menuWidth = rect.width || 0;
+    const menuHeight = rect.height || 0;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const margin = 8;
+
+    const posX = Math.min(
+        Math.max(x, margin),
+        Math.max(margin, viewportWidth - menuWidth - margin)
+    );
+    const posY = Math.min(
+        Math.max(y, margin),
+        Math.max(margin, viewportHeight - menuHeight - margin)
+    );
+
+    messageContextMenu.style.left = `${posX}px`;
+    messageContextMenu.style.top = `${posY}px`;
+
+    const focusable = messageContextMenu.querySelector("button:not(:disabled)");
     if (focusable) {
         focusable.focus();
     }
@@ -255,6 +401,15 @@ function handleConversationContextMenu(event) {
     );
 }
 
+function handleMessageContextMenu(event) {
+    if (!messageContextMenu) return;
+    const messageElement = event.target.closest("article.message.catalyst");
+    if (!messageElement) return;
+    event.preventDefault();
+    closeMessageContextMenu();
+    openMessageContextMenu(event.clientX, event.clientY, messageElement);
+}
+
 function handleConversationListKeydown(event) {
     const item = event.target.closest(".conversation-item");
     if (!item) return;
@@ -313,7 +468,13 @@ function appendMessage(role, text, options = {}) {
     const content = document.createElement("div");
     content.className = "message-content";
 
-    const { model, timestamp, sessionType, skipScroll = false } = options;
+    const {
+        model,
+        timestamp,
+        sessionType,
+        skipScroll = false,
+        debugInfo = null,
+    } = options;
     const metaParts = [];
 
     if (model) metaParts.push(model);
@@ -334,6 +495,12 @@ function appendMessage(role, text, options = {}) {
     content.appendChild(body);
     article.appendChild(avatar);
     article.appendChild(content);
+
+    if (debugInfo && role === "catalyst") {
+        messageDebugData.set(article, debugInfo);
+        article.classList.add("has-debug");
+    }
+
     chatFeed.appendChild(article);
 
     if (skipScroll) {
@@ -352,11 +519,13 @@ function renderConversationMessages(messages = []) {
     messages.forEach((message) => {
         if (!message?.content) return;
         const role = message.role === "assistant" ? "catalyst" : message.role;
+        const debugInfo = normalizeDebugInfo(message);
         appendMessage(role, message.content, {
             model: message.model,
             timestamp: message.timestamp,
             sessionType: message.session_type,
             skipScroll: true,
+            debugInfo,
         });
     });
     chatFeed.scrollTop = chatFeed.scrollHeight;
@@ -644,10 +813,12 @@ async function sendMessage() {
 
         const responseTimestamp = new Date().toISOString();
         const responseSession = data.session_type || activeSession;
+        const debugInfo = normalizeDebugInfo(data);
         appendMessage("catalyst", data.response, {
             model: data.model,
             timestamp: responseTimestamp,
             sessionType: responseSession,
+            debugInfo,
         });
 
         if (pendingInitialGreeting) {
@@ -691,10 +862,12 @@ async function initializeCatalyst() {
         });
 
         const timestamp = new Date().toISOString();
+        const debugInfo = normalizeDebugInfo(data);
         appendMessage("catalyst", data.response, {
             model: data.model,
             timestamp,
             sessionType: data.session_type,
+            debugInfo,
         });
         latestConversationDraft = "";
         initModal.close();
@@ -788,6 +961,132 @@ function closePreview() {
     messageInput.focus();
 }
 
+function openSystemContextModal(debugInfo) {
+    closeMessageContextMenu();
+
+    const hasPrompt = Boolean(
+        debugInfo?.systemPrompt && debugInfo.systemPrompt.trim().length > 0
+    );
+
+    const contextValue = debugInfo?.contextSnapshot;
+    let contextText = "";
+    let hasContext = false;
+    if (contextValue === null || contextValue === undefined) {
+        contextText = "No context snapshot was captured for this message.";
+    } else if (typeof contextValue === "string") {
+        hasContext = contextValue.trim().length > 0;
+        contextText = hasContext
+            ? contextValue
+            : "No context snapshot was captured for this message.";
+    } else {
+        try {
+            contextText = JSON.stringify(contextValue, null, 2);
+            hasContext = contextText.trim().length > 0;
+        } catch (error) {
+            contextText = String(contextValue);
+            hasContext = contextText.trim().length > 0;
+        }
+        if (!hasContext) {
+            contextText = "No context snapshot was captured for this message.";
+        }
+    }
+
+    const promptText = hasPrompt
+        ? debugInfo.systemPrompt
+        : "No system instructions were captured for this message.";
+
+    const clipboardSections = [];
+    if (hasPrompt) {
+        clipboardSections.push(
+            "=== System Instructions ===\n".concat(promptText)
+        );
+    }
+    if (hasContext) {
+        clipboardSections.push(
+            "=== Context Snapshot ===\n".concat(contextText)
+        );
+    }
+
+    currentDebugClipboardText = clipboardSections.join("\n\n");
+
+    const fallbackBody = [
+        `System Instructions:\n${promptText}`,
+        `Context Snapshot:\n${contextText}`,
+    ].join("\n\n");
+
+    if (!systemContextModal || !systemContextContent) {
+        window.alert(fallbackBody);
+        return;
+    }
+
+    systemContextContent.innerHTML = "";
+
+    const formatMarkdown = (value, { preferCodeBlock = false } = {}) => {
+        const rawText = typeof value === "string" ? value : String(value ?? "");
+        const trimmed = rawText.trim();
+        if (!trimmed) {
+            return "_No details were captured for this section._";
+        }
+        if (
+            preferCodeBlock &&
+            !rawText.includes("```") &&
+            /^[\[{]/.test(trimmed)
+        ) {
+            return `\`\`\`json\n${rawText}\n\`\`\``;
+        }
+        return rawText;
+    };
+
+    const makeSection = (title, text, options = {}) => {
+        const section = document.createElement("section");
+        section.className = "debug-section";
+        const heading = document.createElement("h3");
+        heading.textContent = title;
+        const body = document.createElement("div");
+        body.className = "debug-markdown";
+        const markdown = formatMarkdown(text, options);
+        body.innerHTML = renderMarkdown(markdown);
+        section.append(heading, body);
+        return section;
+    };
+
+    systemContextContent.append(
+        makeSection("System Instructions", promptText),
+        makeSection("Context Snapshot", contextText, { preferCodeBlock: true })
+    );
+
+    if (copySystemContextBtn) {
+        copySystemContextBtn.disabled = currentDebugClipboardText.length === 0;
+        copySystemContextBtn.textContent = "Copy to clipboard";
+    }
+
+    try {
+        systemContextModal.showModal();
+    } catch (error) {
+        window.alert(fallbackBody);
+    }
+}
+
+async function copyDebugDetailsToClipboard() {
+    if (!copySystemContextBtn) return;
+    if (!currentDebugClipboardText) {
+        copySystemContextBtn.textContent = "Nothing to copy";
+        setTimeout(() => {
+            copySystemContextBtn.textContent = "Copy to clipboard";
+        }, 2000);
+        return;
+    }
+    try {
+        await navigator.clipboard.writeText(currentDebugClipboardText);
+        copySystemContextBtn.textContent = "Copied!";
+    } catch (error) {
+        copySystemContextBtn.textContent = "Copy failed";
+    }
+    setTimeout(() => {
+        copySystemContextBtn.textContent = "Copy to clipboard";
+    }, 2000);
+}
+
 function bindEvents() {
     sendButton.addEventListener("click", sendMessage);
 
@@ -831,6 +1130,10 @@ function bindEvents() {
                 closePreview();
             }
             closeConversationContextMenu();
+            closeMessageContextMenu();
+            if (systemContextModal?.open) {
+                systemContextModal.close();
+            }
         }
     });
 
@@ -846,6 +1149,7 @@ function bindEvents() {
     if (conversationList) {
         conversationList.addEventListener("click", (event) => {
             closeConversationContextMenu();
+            closeMessageContextMenu();
             const item = event.target.closest(".conversation-item");
             if (!item) return;
             const { conversationId } = item.dataset;
@@ -862,10 +1166,15 @@ function bindEvents() {
             "keydown",
             handleConversationListKeydown
         );
-        conversationList.addEventListener(
-            "scroll",
-            closeConversationContextMenu
-        );
+        conversationList.addEventListener("scroll", () => {
+            closeConversationContextMenu();
+            closeMessageContextMenu();
+        });
+    }
+
+    if (chatFeed) {
+        chatFeed.addEventListener("contextmenu", handleMessageContextMenu);
+        chatFeed.addEventListener("scroll", closeMessageContextMenu);
     }
 
     if (newConversationButton) {
@@ -902,21 +1211,74 @@ function bindEvents() {
         });
     }
 
+    if (messageContextMenu) {
+        messageContextMenu.addEventListener("click", (event) => {
+            const button = event.target.closest("button[data-action]");
+            if (!button) return;
+            const { action } = button.dataset;
+            if (action === "view-debug") {
+                event.preventDefault();
+                const debugInfo = messageContextTargetElement
+                    ? messageDebugData.get(messageContextTargetElement) || null
+                    : null;
+                openSystemContextModal(debugInfo);
+            }
+        });
+    }
+
+    if (closeSystemContextBtn) {
+        closeSystemContextBtn.addEventListener("click", () => {
+            systemContextModal?.close();
+        });
+    }
+
+    if (systemContextModal) {
+        systemContextModal.addEventListener("close", () => {
+            currentDebugClipboardText = "";
+            if (copySystemContextBtn) {
+                copySystemContextBtn.textContent = "Copy to clipboard";
+                copySystemContextBtn.disabled = true;
+            }
+        });
+    }
+
+    if (copySystemContextBtn) {
+        copySystemContextBtn.addEventListener(
+            "click",
+            copyDebugDetailsToClipboard
+        );
+    }
+
     document.addEventListener("pointerdown", (event) => {
-        if (!conversationContextMenu || conversationContextMenu.hidden) return;
-        if (
-            conversationContextMenu.contains(event.target) ||
-            (contextMenuTargetElement &&
-                contextMenuTargetElement.contains(event.target))
-        ) {
-            return;
+        const insideConversationMenu =
+            conversationContextMenu &&
+            !conversationContextMenu.hidden &&
+            (conversationContextMenu.contains(event.target) ||
+                (contextMenuTargetElement &&
+                    contextMenuTargetElement.contains(event.target)));
+        if (!insideConversationMenu) {
+            closeConversationContextMenu();
         }
-        closeConversationContextMenu();
+
+        const insideMessageMenu =
+            messageContextMenu &&
+            !messageContextMenu.hidden &&
+            (messageContextMenu.contains(event.target) ||
+                (messageContextTargetElement &&
+                    messageContextTargetElement.contains(event.target)));
+        if (!insideMessageMenu) {
+            closeMessageContextMenu();
+        }
     });
 
-    window.addEventListener("blur", closeConversationContextMenu);
-    window.addEventListener("resize", closeConversationContextMenu);
-    window.addEventListener("scroll", closeConversationContextMenu, true);
+    const closeMenus = () => {
+        closeConversationContextMenu();
+        closeMessageContextMenu();
+    };
+
+    window.addEventListener("blur", closeMenus);
+    window.addEventListener("resize", closeMenus);
+    window.addEventListener("scroll", closeMenus, true);
 }
 
 async function generateInitialGreeting() {
@@ -927,10 +1289,12 @@ async function generateInitialGreeting() {
             body: JSON.stringify({ session_type: activeSession }),
         });
         const timestamp = new Date().toISOString();
+        const debugInfo = normalizeDebugInfo(data);
         appendMessage("catalyst", data.response, {
             model: data.model,
             timestamp,
             sessionType: data.session_type,
+            debugInfo,
         });
         pendingInitialGreeting = {
             text: data.response,
@@ -938,6 +1302,8 @@ async function generateInitialGreeting() {
             model: data.model || null,
             timestamp,
             conversation_id: data.conversation_id || null,
+            system_prompt: data.system_prompt || null,
+            context_snapshot: data.context_snapshot || null,
         };
         latestConversationDraft = "";
         if (data.conversation_id) {

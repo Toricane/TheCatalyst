@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
 
@@ -34,6 +34,14 @@ class InitialGreeting(BaseModel):
         default=None,
         description="Conversation thread identifier associated with the greeting",
     )
+    system_prompt: Optional[str] = Field(
+        default=None,
+        description="System instructions used to produce the greeting",
+    )
+    context_snapshot: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Context snapshot supplied to the model when generating the greeting",
+    )
 
 
 class ChatMessage(BaseModel):
@@ -56,6 +64,8 @@ class ChatResponse(BaseModel):
     conversation_id: Optional[str] = None
     thinking: Optional[str] = None
     model: Optional[str] = None
+    system_prompt: Optional[str] = None
+    context_snapshot: Optional[Dict[str, Any]] = None
 
 
 class GreetingRequest(BaseModel):

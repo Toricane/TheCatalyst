@@ -42,7 +42,7 @@ from .schemas import (
 )
 from .time_utils import local_now, local_today, to_local, utc_now
 
-RECENT_CONVERSATION_CHAR_LIMIT = 16000
+RECENT_CONVERSATION_CHAR_LIMIT = 24000
 
 
 def _conversation_id_for_record(
@@ -219,6 +219,8 @@ async def initialize_catalyst(
                 "model": response.get("model"),
                 "conversation_id": conversation_id,
                 "is_conversation_start": True,
+                "system_prompt": response.get("system_prompt"),
+                "context_snapshot": response.get("context_snapshot"),
             }
         ),
         thinking_log=response.get("thinking") or "",
@@ -233,6 +235,8 @@ async def initialize_catalyst(
         conversation_id=conversation_id,
         thinking=response.get("thinking") if SHOW_THINKING else None,
         model=response.get("model"),
+        system_prompt=response.get("system_prompt"),
+        context_snapshot=response.get("context_snapshot"),
     )
 
 
@@ -250,7 +254,7 @@ async def get_initial_greeting(
         db.query(models.Conversation)
         .filter(models.Conversation.created_at >= recent_cutoff)
         .order_by(models.Conversation.created_at.desc())
-        .limit(8)
+        # .limit(8)
         .all()
     )
 
@@ -442,6 +446,8 @@ Current context:
                 "initial_greeting": True,
                 "conversation_id": conversation_id,
                 "is_conversation_start": True,
+                "system_prompt": response.get("system_prompt"),
+                "context_snapshot": response.get("context_snapshot"),
             }
         ),
         thinking_log=response.get("thinking") or "",
@@ -456,6 +462,8 @@ Current context:
         conversation_id=conversation_id,
         thinking=response.get("thinking") if SHOW_THINKING else None,
         model=response.get("model"),
+        system_prompt=response.get("system_prompt"),
+        context_snapshot=response.get("context_snapshot"),
     )
 
 
@@ -634,6 +642,12 @@ async def chat_with_catalyst(
                         "initial_greeting": True,
                         "conversation_id": greeting_conversation_id,
                         "is_conversation_start": True,
+                        "system_prompt": getattr(
+                            greeting_payload, "system_prompt", None
+                        ),
+                        "context_snapshot": getattr(
+                            greeting_payload, "context_snapshot", None
+                        ),
                     }
                 ),
                 thinking_log="",
@@ -656,6 +670,8 @@ async def chat_with_catalyst(
                 "model": response.get("model"),
                 "conversation_id": conversation_id,
                 "is_conversation_start": created_new_conversation,
+                "system_prompt": response.get("system_prompt"),
+                "context_snapshot": response.get("context_snapshot"),
             }
         ),
         thinking_log=response.get("thinking") or "",
@@ -708,6 +724,8 @@ async def chat_with_catalyst(
         conversation_id=conversation_id,
         thinking=response.get("thinking") if SHOW_THINKING else None,
         model=response.get("model"),
+        system_prompt=response.get("system_prompt"),
+        context_snapshot=response.get("context_snapshot"),
     )
 
 
@@ -1058,6 +1076,8 @@ async def get_conversation_transcript(
                     "model": messages.get("model"),
                     "thinking": record.thinking_log or None,
                     "function_calls": messages.get("function_calls", []),
+                    "system_prompt": messages.get("system_prompt"),
+                    "context_snapshot": messages.get("context_snapshot"),
                 }
             )
 

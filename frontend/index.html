@@ -160,6 +160,38 @@
                 🗑 Delete conversation
             </button>
         </div>
+        <div
+            class="context-menu"
+            id="messageContextMenu"
+            role="menu"
+            aria-hidden="true"
+            hidden
+        >
+            <button
+                type="button"
+                class="context-menu-item"
+                data-action="view-debug"
+                role="menuitem"
+            >
+                🪄 View system context
+            </button>
+        </div>
+        <dialog class="modal debug-modal" id="systemContextModal">
+            <div class="modal-card debug-card">
+                <div class="modal-header">
+                    <h2>System Context</h2>
+                    <button type="button" class="close-btn" id="closeSystemContextBtn">
+                        ✕
+                    </button>
+                </div>
+                <div class="debug-content" id="systemContextContent"></div>
+                <menu class="modal-actions">
+                    <button type="button" class="primary" id="copySystemContextBtn">
+                        Copy to clipboard
+                    </button>
+                </menu>
+            </div>
+        </dialog>
         <script type="module" src="./app.js"></script>
     </body>
 </html>

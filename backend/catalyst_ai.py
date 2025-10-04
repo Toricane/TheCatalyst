@@ -294,6 +294,10 @@ async def generate_catalyst_response(
         )
 
     system_prompt = _build_system_prompt(session_type, context)
+    try:
+        context_snapshot = json.loads(json.dumps(context, default=str))
+    except TypeError:  # pragma: no cover - fallback for unexpected types
+        context_snapshot = context
 
     contents = [types.Content(role="user", parts=[types.Part.from_text(text=message)])]
 
@@ -374,11 +378,16 @@ async def generate_catalyst_response(
     actual_tokens = estimate_tokens(response_text)
     await rate_limiter.record_usage(current_model_used, actual_tokens)
 
-    return _parse_model_response(
+    result = _parse_model_response(
         response,
         executed_calls,
         model_used=current_model_used,
     )
+
+    result["system_prompt"] = system_prompt
+    result["context_snapshot"] = context_snapshot
+
+    return result
 
 
 async def update_ltm_memory(
