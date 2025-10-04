@@ -401,7 +401,6 @@ async def get_initial_greeting(
     ltm_profile = get_current_ltm_profile(db)
     goals = get_goals_hierarchy(db)
     insights = get_recent_insights(db)
-    insights = get_recent_insights(db)
 
     recent_cutoff = utc_now() - timedelta(hours=48)
     recent_records = (
@@ -552,14 +551,6 @@ async def get_initial_greeting(
         "insights": insights,
         "recent_conversations": recent_conversations,
     }
-
-    context_reference = _build_context_reference(
-        sources=context_sources,
-        goals=goals,
-        ltm_profile=ltm_profile,
-        missed_info=missed_info,
-        insights=insights,
-    )
 
     context_reference = _build_context_reference(
         sources=context_sources,
