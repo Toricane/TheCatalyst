@@ -612,10 +612,40 @@ def _build_system_prompt(
 
     timestamp_source = generated_at or local_now()
 
+    insights_list = context.get("insights") or []
     recent_conversations = context.get("recent_conversations") or []
+
+    if insights_list:
+        formatted_insights: List[str] = []
+        for insight in insights_list[:6]:
+            description = (insight.get("description") or "").strip()
+            if len(description) > 220:
+                description = description[:217] + "…"
+
+            label_parts: List[str] = []
+            category = insight.get("category")
+            if category:
+                label_parts.append(str(category))
+            insight_type = insight.get("insight_type")
+            if insight_type and insight_type not in label_parts:
+                label_parts.append(str(insight_type))
+            label = " • ".join(label_parts) if label_parts else "Insight"
+
+            date_identified = insight.get("date_identified")
+            if date_identified:
+                formatted_insights.append(
+                    f"- [{label}] ({date_identified}) {description}"
+                )
+            else:
+                formatted_insights.append(f"- [{label}] {description}")
+
+        insights_block = "### Key Insights:\n" + "\n".join(formatted_insights) + "\n\n"
+    else:
+        insights_block = "### Key Insights:\n- No stored insights yet.\n\n"
+
     recent_block = ""
     if recent_conversations:
-        excerpts = []
+        excerpts: List[str] = []
         for entry in recent_conversations[-5:]:
             timestamp = entry.get("timestamp") or "Recent"
             user_text = (entry.get("user") or "").strip()
@@ -640,6 +670,7 @@ def _build_system_prompt(
         f"### User's Long-Term Memory Profile:\n{context['ltm_profile']['full_text']}\n\n"
         f"### Recent Patterns Identified:\n{context['ltm_profile']['patterns']}\n\n"
         f"### Current State:\n{context['ltm_profile']['current_state']}\n\n"
+        f"{insights_block}"
         f"{recent_block}"
         f"### Session Information:\n- Session Type: {session_type.value}\n"
         f"- Current Date: {timestamp_source.strftime('%Y-%m-%d')}\n"

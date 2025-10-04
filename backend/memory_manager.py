@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from .config import CATCH_UP_THRESHOLD_HOURS
-from .models import Goal, LTMProfile, SessionTracking
+from .models import Goal, Insight, LTMProfile, SessionTracking
 from .time_utils import ensure_utc, to_local, utc_now
 
 
@@ -48,6 +48,52 @@ def serialize_ltm_profile(profile: Optional[LTMProfile]) -> Dict[str, Any]:
             "token_count": profile.token_count,
         },
     }
+
+
+def _serialize_insight_row(insight: Insight) -> Dict[str, Any]:
+    return {
+        "id": insight.id,
+        "insight_type": insight.insight_type,
+        "category": insight.category,
+        "description": insight.description,
+        "importance_score": insight.importance_score,
+        "date_identified": insight.date_identified.isoformat()
+        if insight.date_identified
+        else None,
+    }
+
+
+def get_recent_insights(session: Session, limit: int = 8) -> List[Dict[str, Any]]:
+    """Return the most relevant stored insights for contextual priming."""
+
+    insights = (
+        session.query(Insight)
+        .order_by(
+            Insight.importance_score.desc(),
+            Insight.date_identified.desc(),
+            Insight.id.desc(),
+        )
+        .limit(limit)
+        .all()
+    )
+    return [_serialize_insight_row(insight) for insight in insights]
+
+
+def get_insights_by_ids(
+    session: Session, insight_ids: Sequence[int]
+) -> List[Dict[str, Any]]:
+    """Fetch specific insights while preserving the requested order."""
+
+    if not insight_ids:
+        return []
+
+    rows = session.query(Insight).filter(Insight.id.in_(list(insight_ids))).all()
+    row_map = {row.id: row for row in rows}
+    return [
+        _serialize_insight_row(row_map[insight_id])
+        for insight_id in insight_ids
+        if insight_id in row_map
+    ]
 
 
 def compress_old_memories(text: str, age_days: int) -> str:

@@ -146,6 +146,9 @@ def test_chat_does_not_duplicate_initial_greeting(monkeypatch):
         session.close()
 
     async def _fake_generate_catalyst_response(*_args, **_kwargs):
+        context_payload = _args[2] if len(_args) >= 3 else _kwargs.get("context")
+        assert context_payload is not None
+        assert "insights" in context_payload
         return {
             "response": "Mock assistant reply.",
             "memory_updated": False,

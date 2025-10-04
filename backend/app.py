@@ -31,8 +31,10 @@ from .memory_manager import (
     check_for_missed_sessions,
     get_current_ltm_profile,
     get_goals_hierarchy,
+    get_insights_by_ids,
     get_ltm_profile_by_id,
     get_ltm_profile_by_version,
+    get_recent_insights,
 )
 from .rate_limiter import estimate_tokens, rate_limiter
 from .schemas import (
@@ -103,6 +105,7 @@ def _build_context_reference(
     goals: List[Dict[str, Any]],
     ltm_profile: Dict[str, Any],
     missed_info: Dict[str, Any],
+    insights: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     sequence: List[Dict[str, Any]] = []
 
@@ -126,6 +129,11 @@ def _build_context_reference(
             "version": ltm_meta.get("version"),
             "updated_at": ltm_meta.get("updated_at"),
         },
+        "insight_ids": [
+            insight.get("id")
+            for insight in (insights or [])
+            if insight.get("id") is not None
+        ],
         "goal_ids": [goal.get("id") for goal in goals if goal.get("id") is not None],
         "missed_sessions": missed_info.get("missed_sessions", []),
         "generated_at": utc_now().isoformat(),
@@ -210,10 +218,17 @@ def _reconstruct_context_from_reference(
 
     missed_sessions = reference.get("missed_sessions", [])
 
+    insight_ids = reference.get("insight_ids") or []
+    if insight_ids:
+        insights = get_insights_by_ids(db, insight_ids)
+    else:
+        insights = get_recent_insights(db)
+
     return {
         "goals": goals,
         "ltm_profile": ltm_profile,
         "missed_sessions": missed_sessions,
+        "insights": insights,
         "recent_conversations": recent_entries,
     }
 
@@ -312,6 +327,7 @@ async def initialize_catalyst(
     context = {
         "goals": [_serialize_goal_record(goal_row)],
         "ltm_profile": get_ltm_profile_by_id(db, profile_row.id),
+        "insights": get_recent_insights(db),
     }
 
     goal_prompt = (
@@ -335,6 +351,7 @@ async def initialize_catalyst(
         goals=context.get("goals", []),
         ltm_profile=context.get("ltm_profile", {}),
         missed_info={"missed_sessions": []},
+        insights=context.get("insights", []),
     )
 
     conversation_snapshot = models.Conversation(
@@ -383,6 +400,8 @@ async def get_initial_greeting(
     missed_info = check_for_missed_sessions(db)
     ltm_profile = get_current_ltm_profile(db)
     goals = get_goals_hierarchy(db)
+    insights = get_recent_insights(db)
+    insights = get_recent_insights(db)
 
     recent_cutoff = utc_now() - timedelta(hours=48)
     recent_records = (
@@ -530,6 +549,7 @@ async def get_initial_greeting(
         "goals": goals,
         "ltm_profile": ltm_profile,
         "missed_sessions": missed_info.get("missed_sessions", []),
+        "insights": insights,
         "recent_conversations": recent_conversations,
     }
 
@@ -538,6 +558,7 @@ async def get_initial_greeting(
         goals=goals,
         ltm_profile=ltm_profile,
         missed_info=missed_info,
+        insights=insights,
     )
 
     context_reference = _build_context_reference(
@@ -545,6 +566,7 @@ async def get_initial_greeting(
         goals=goals,
         ltm_profile=ltm_profile,
         missed_info=missed_info,
+        insights=insights,
     )
 
     # Create a contextual greeting message based on time and user's situation
@@ -675,6 +697,8 @@ async def chat_with_catalyst(
             session_type=actual_session.value,
         )
 
+    insights = get_recent_insights(db)
+
     recent_records = (
         db.query(models.Conversation)
         .order_by(models.Conversation.created_at.desc())
@@ -779,6 +803,7 @@ async def chat_with_catalyst(
         "goals": goals,
         "ltm_profile": ltm_profile,
         "missed_sessions": missed_info.get("missed_sessions", []),
+        "insights": insights,
         "recent_conversations": recent_conversations,
     }
 
@@ -787,6 +812,7 @@ async def chat_with_catalyst(
         goals=goals,
         ltm_profile=ltm_profile,
         missed_info=missed_info,
+        insights=insights,
     )
 
     response = await generate_catalyst_response(
