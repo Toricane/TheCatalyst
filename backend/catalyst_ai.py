@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import hashlib
 import json
 import random
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
@@ -293,7 +295,14 @@ async def generate_catalyst_response(
             detail="Gemini client not configured; missing GEMINI_API_KEY",
         )
 
-    system_prompt = _build_system_prompt(session_type, context)
+    base_prompt_text, base_metadata = _load_base_prompt()
+    prompt_timestamp = local_now()
+    system_prompt = _build_system_prompt(
+        session_type,
+        context,
+        base_prompt=base_prompt_text,
+        generated_at=prompt_timestamp,
+    )
     try:
         context_snapshot = json.loads(json.dumps(context, default=str))
     except TypeError:  # pragma: no cover - fallback for unexpected types
@@ -386,6 +395,12 @@ async def generate_catalyst_response(
 
     result["system_prompt"] = system_prompt
     result["context_snapshot"] = context_snapshot
+    result["system_prompt_reference"] = {
+        "type": "system_prompt/v1",
+        "session_type": session_type.value,
+        "generated_at": prompt_timestamp.isoformat(),
+        "base": base_metadata,
+    }
 
     return result
 
@@ -539,11 +554,63 @@ def get_session_instructions(session_type: SessionType) -> str:
     return instructions.get(session_type, instructions[SessionType.GENERAL])
 
 
-def _build_system_prompt(session_type: SessionType, context: Dict[str, Any]) -> str:
+def _load_base_prompt() -> Tuple[str, Dict[str, Any]]:
+    """Load the base system prompt text along with metadata."""
+
     if SYSTEM_PROMPT_PATH.exists():
-        base_prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
-    else:
-        base_prompt = "You are The Catalyst, an elite AI mentor."
+        try:
+            text = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+        except OSError:
+            text = "You are The Catalyst, an elite AI mentor."
+            metadata = {
+                "source": "default",
+                "path": None,
+                "checksum": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                "length": len(text),
+                "modified_at": None,
+            }
+            return text, metadata
+
+        checksum = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        try:
+            stat = SYSTEM_PROMPT_PATH.stat()
+            modified_at = datetime.fromtimestamp(
+                stat.st_mtime, timezone.utc
+            ).isoformat()
+        except OSError:
+            modified_at = None
+
+        metadata = {
+            "source": "file",
+            "path": str(SYSTEM_PROMPT_PATH.resolve()),
+            "checksum": checksum,
+            "length": len(text),
+            "modified_at": modified_at,
+        }
+        return text, metadata
+
+    text = "You are The Catalyst, an elite AI mentor."
+    metadata = {
+        "source": "default",
+        "path": None,
+        "checksum": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "length": len(text),
+        "modified_at": None,
+    }
+    return text, metadata
+
+
+def _build_system_prompt(
+    session_type: SessionType,
+    context: Dict[str, Any],
+    *,
+    base_prompt: Optional[str] = None,
+    generated_at: Optional[datetime] = None,
+) -> str:
+    if base_prompt is None:
+        base_prompt, _ = _load_base_prompt()
+
+    timestamp_source = generated_at or local_now()
 
     recent_conversations = context.get("recent_conversations") or []
     recent_block = ""
@@ -575,11 +642,44 @@ def _build_system_prompt(session_type: SessionType, context: Dict[str, Any]) -> 
         f"### Current State:\n{context['ltm_profile']['current_state']}\n\n"
         f"{recent_block}"
         f"### Session Information:\n- Session Type: {session_type.value}\n"
-        f"- Current Date: {local_now().strftime('%Y-%m-%d')}\n"
+        f"- Current Date: {timestamp_source.strftime('%Y-%m-%d')}\n"
         f"- Missed Sessions: {context.get('missed_sessions', [])}\n\n"
         f"## Session-Specific Instructions:\n\n{get_session_instructions(session_type)}\n"
     )
     return prompt
+
+
+def _parse_reference_timestamp(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    normalised = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalised)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def reconstruct_system_prompt(
+    session_type: SessionType,
+    context: Dict[str, Any],
+    reference: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, Dict[str, Any]]:
+    base_prompt_text, runtime_metadata = _load_base_prompt()
+    generated_at = None
+    if reference:
+        generated_at = _parse_reference_timestamp(reference.get("generated_at"))
+
+    prompt = _build_system_prompt(
+        session_type,
+        context,
+        base_prompt=base_prompt_text,
+        generated_at=generated_at,
+    )
+
+    return prompt, runtime_metadata
 
 
 def _extract_function_calls(response: Any) -> List[Tuple[str, Dict[str, Any]]]:

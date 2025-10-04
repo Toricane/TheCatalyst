@@ -38,9 +38,21 @@ class InitialGreeting(BaseModel):
         default=None,
         description="System instructions used to produce the greeting",
     )
+    system_prompt_reference: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Reference metadata for reconstructing the system prompt",
+    )
     context_snapshot: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Context snapshot supplied to the model when generating the greeting",
+    )
+    context_reference: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Lightweight reference describing the context scope used when generating the greeting",
+    )
+    message_id: Optional[int] = Field(
+        default=None,
+        description="Database identifier for the persisted greeting message, when available",
     )
 
 
@@ -62,10 +74,13 @@ class ChatResponse(BaseModel):
     memory_updated: bool = False
     session_type: str
     conversation_id: Optional[str] = None
+    message_id: Optional[int] = None
     thinking: Optional[str] = None
     model: Optional[str] = None
     system_prompt: Optional[str] = None
     context_snapshot: Optional[Dict[str, Any]] = None
+    context_reference: Optional[Dict[str, Any]] = None
+    system_prompt_reference: Optional[Dict[str, Any]] = None
 
 
 class GreetingRequest(BaseModel):

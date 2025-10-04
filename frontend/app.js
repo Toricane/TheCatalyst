@@ -3,13 +3,6 @@ import { marked } from "https://cdn.jsdelivr.net/npm/marked@12.0.2/lib/marked.es
 
 const DOMPurify = createDOMPurify(window);
 
-marked.setOptions({
-    gfm: true,
-    breaks: true,
-    headerIds: false,
-    mangle: false,
-});
-
 function renderMarkdown(text = "") {
     const normalized = String(text ?? "").replace(/\r\n/g, "\n");
     const parsed = marked.parse(normalized);
@@ -153,6 +146,43 @@ function normalizeDebugInfo(raw) {
             ? raw.contextSnapshot
             : null;
 
+    const contextReference =
+        raw.context_reference !== undefined
+            ? raw.context_reference
+            : raw.contextReference !== undefined
+            ? raw.contextReference
+            : null;
+
+    const systemPromptReferenceRaw =
+        raw.system_prompt_reference !== undefined
+            ? raw.system_prompt_reference
+            : raw.systemPromptReference !== undefined
+            ? raw.systemPromptReference
+            : null;
+
+    let systemPromptReference = systemPromptReferenceRaw;
+    if (typeof systemPromptReference === "string") {
+        try {
+            systemPromptReference = JSON.parse(systemPromptReference);
+        } catch (error) {
+            // leave as string if parsing fails
+        }
+    }
+
+    const conversationId =
+        raw.conversation_id !== undefined
+            ? raw.conversation_id
+            : raw.conversationId !== undefined
+            ? raw.conversationId
+            : null;
+
+    const messageId =
+        raw.message_id !== undefined
+            ? raw.message_id
+            : raw.messageId !== undefined
+            ? raw.messageId
+            : null;
+
     if (typeof contextSnapshot === "string") {
         const trimmed = contextSnapshot.trim();
         if (
@@ -162,7 +192,7 @@ function normalizeDebugInfo(raw) {
             try {
                 contextSnapshot = JSON.parse(trimmed);
             } catch (error) {
-                // Keep original string if parsing fails
+                // keep string if parsing fails
             }
         }
     }
@@ -187,13 +217,52 @@ function normalizeDebugInfo(raw) {
         return true;
     })();
 
-    if (!hasPrompt && !hasContext) {
+    const hasReference = (() => {
+        if (contextReference === null || contextReference === undefined) {
+            return false;
+        }
+        if (Array.isArray(contextReference)) {
+            return contextReference.length > 0;
+        }
+        if (typeof contextReference === "object") {
+            return Object.keys(contextReference).length > 0;
+        }
+        if (typeof contextReference === "string") {
+            return contextReference.trim().length > 0;
+        }
+        return true;
+    })();
+
+    const hasSystemPromptReference = (() => {
+        if (
+            systemPromptReference === null ||
+            systemPromptReference === undefined
+        ) {
+            return false;
+        }
+        if (Array.isArray(systemPromptReference)) {
+            return systemPromptReference.length > 0;
+        }
+        if (typeof systemPromptReference === "object") {
+            return Object.keys(systemPromptReference).length > 0;
+        }
+        if (typeof systemPromptReference === "string") {
+            return systemPromptReference.trim().length > 0;
+        }
+        return true;
+    })();
+
+    if (!hasPrompt && !hasContext && !hasReference) {
         return null;
     }
 
     return {
         systemPrompt: hasPrompt ? systemPromptSource : "",
         contextSnapshot,
+        contextReference,
+        systemPromptReference,
+        conversationId,
+        messageId,
     };
 }
 
@@ -590,6 +659,25 @@ async function fetchJSON(url, options = {}) {
     return response.json();
 }
 
+async function fetchMessageContext(conversationId, messageId) {
+    const response = await fetch(
+        `${API_BASE_URL}/conversations/${conversationId}/messages/${messageId}/context`
+    );
+
+    if (!response.ok) {
+        let detail = response.statusText;
+        try {
+            const data = await response.json();
+            detail = data.detail || JSON.stringify(data);
+        } catch (error) {
+            detail = `${response.status} ${response.statusText}`;
+        }
+        throw new Error(detail);
+    }
+
+    return response.json();
+}
+
 async function refreshGoalDisplay() {
     try {
         const data = await fetchJSON(`${API_BASE_URL}/goals`);
@@ -961,68 +1049,114 @@ function closePreview() {
     messageInput.focus();
 }
 
-function openSystemContextModal(debugInfo) {
+async function openSystemContextModal(debugInfo) {
     closeMessageContextMenu();
 
-    const hasPrompt = Boolean(
-        debugInfo?.systemPrompt && debugInfo.systemPrompt.trim().length > 0
-    );
+    const conversationId = debugInfo?.conversationId ?? null;
+    const messageId = debugInfo?.messageId ?? null;
 
-    const contextValue = debugInfo?.contextSnapshot;
-    let contextText = "";
-    let hasContext = false;
-    if (contextValue === null || contextValue === undefined) {
-        contextText = "No context snapshot was captured for this message.";
-    } else if (typeof contextValue === "string") {
-        hasContext = contextValue.trim().length > 0;
-        contextText = hasContext
-            ? contextValue
-            : "No context snapshot was captured for this message.";
-    } else {
+    let systemPromptText = debugInfo?.systemPrompt ?? "";
+    let contextData = debugInfo?.contextSnapshot ?? null;
+    let contextReference = debugInfo?.contextReference ?? null;
+    let systemPromptReference = debugInfo?.systemPromptReference ?? null;
+
+    let systemPromptRuntimeBase = null;
+    let systemPromptChecksumMatch = null;
+
+    const hasValue = (value) => {
+        if (value === null || value === undefined) return false;
+        if (typeof value === "string") return value.trim().length > 0;
+        if (Array.isArray(value)) return value.length > 0;
+        if (typeof value === "object") return Object.keys(value).length > 0;
+        return true;
+    };
+
+    const shouldFetchRemote =
+        conversationId &&
+        messageId &&
+        ((hasValue(contextReference) && !hasValue(contextData)) ||
+            (hasValue(systemPromptReference) && !hasValue(systemPromptText)));
+
+    if (shouldFetchRemote) {
         try {
-            contextText = JSON.stringify(contextValue, null, 2);
-            hasContext = contextText.trim().length > 0;
+            if (systemContextModal && systemContextContent) {
+                systemContextContent.innerHTML =
+                    '<p class="debug-loading">Loading context&hellip;</p>';
+                if (!systemContextModal.open) {
+                    systemContextModal.showModal();
+                }
+            }
+
+            const fetched = await fetchMessageContext(
+                conversationId,
+                messageId
+            );
+
+            if (fetched?.context !== undefined) {
+                contextData = fetched.context;
+            } else if (
+                !hasValue(contextData) &&
+                fetched?.snapshot !== undefined
+            ) {
+                contextData = fetched.snapshot;
+            }
+
+            if (!hasValue(contextReference) && fetched?.reference) {
+                contextReference = fetched.reference;
+            }
+
+            if (!hasValue(systemPromptText) && fetched?.system_prompt) {
+                systemPromptText = fetched.system_prompt;
+            }
+
+            if (fetched?.system_prompt_reference) {
+                systemPromptReference = fetched.system_prompt_reference;
+            }
+
+            if (fetched?.system_prompt_runtime_base) {
+                systemPromptRuntimeBase = fetched.system_prompt_runtime_base;
+            }
+
+            if (fetched?.system_prompt_checksum_match !== undefined) {
+                systemPromptChecksumMatch =
+                    fetched.system_prompt_checksum_match;
+            }
         } catch (error) {
-            contextText = String(contextValue);
-            hasContext = contextText.trim().length > 0;
-        }
-        if (!hasContext) {
-            contextText = "No context snapshot was captured for this message.";
+            contextData = {
+                error: error.message || "Unable to retrieve context metadata.",
+            };
         }
     }
 
-    const promptText = hasPrompt
-        ? debugInfo.systemPrompt
-        : "No system instructions were captured for this message.";
+    const hasPrompt = hasValue(systemPromptText);
+    const hasContext = hasValue(contextData);
+    const hasContextReference = hasValue(contextReference);
+    const hasPromptReference = hasValue(systemPromptReference);
 
-    const clipboardSections = [];
-    if (hasPrompt) {
-        clipboardSections.push(
-            "=== System Instructions ===\n".concat(promptText)
+    if (
+        !hasPrompt &&
+        !hasContext &&
+        !hasContextReference &&
+        !hasPromptReference
+    ) {
+        window.alert(
+            "No system prompt, context snapshot, or reference metadata is available for this message."
         );
-    }
-    if (hasContext) {
-        clipboardSections.push(
-            "=== Context Snapshot ===\n".concat(contextText)
-        );
-    }
-
-    currentDebugClipboardText = clipboardSections.join("\n\n");
-
-    const fallbackBody = [
-        `System Instructions:\n${promptText}`,
-        `Context Snapshot:\n${contextText}`,
-    ].join("\n\n");
-
-    if (!systemContextModal || !systemContextContent) {
-        window.alert(fallbackBody);
         return;
     }
 
-    systemContextContent.innerHTML = "";
+    const normalizeToString = (value) => {
+        if (value === null || value === undefined) return "";
+        if (typeof value === "string") return value;
+        try {
+            return JSON.stringify(value, null, 2);
+        } catch (error) {
+            return String(value);
+        }
+    };
 
     const formatMarkdown = (value, { preferCodeBlock = false } = {}) => {
-        const rawText = typeof value === "string" ? value : String(value ?? "");
+        const rawText = String(value ?? "");
         const trimmed = rawText.trim();
         if (!trimmed) {
             return "_No details were captured for this section._";
@@ -1037,33 +1171,120 @@ function openSystemContextModal(debugInfo) {
         return rawText;
     };
 
+    if (debugInfo && typeof debugInfo === "object") {
+        debugInfo.systemPrompt = systemPromptText;
+        debugInfo.contextSnapshot = contextData;
+        debugInfo.contextReference = contextReference;
+        debugInfo.systemPromptReference = systemPromptReference;
+    }
+
+    const promptText = hasPrompt
+        ? systemPromptText
+        : "No system instructions were captured for this message.";
+    const contextText = hasContext
+        ? normalizeToString(contextData)
+        : "No context snapshot was captured for this message.";
+    const contextReferenceText = hasContextReference
+        ? normalizeToString(contextReference)
+        : "No context reference metadata was stored for this message.";
+
+    const promptReferencePayload = (() => {
+        if (!hasPromptReference) {
+            return "No system prompt reference metadata was stored for this message.";
+        }
+
+        if (systemPromptRuntimeBase || systemPromptChecksumMatch !== null) {
+            return normalizeToString({
+                reference: systemPromptReference,
+                runtime_base: systemPromptRuntimeBase || undefined,
+                checksum_match: systemPromptChecksumMatch,
+            });
+        }
+
+        return normalizeToString(systemPromptReference);
+    })();
+
+    const clipboardSections = [];
+    if (hasPrompt) {
+        clipboardSections.push(
+            "=== System Instructions ===\n".concat(
+                normalizeToString(systemPromptText)
+            )
+        );
+    }
+    if (hasContext) {
+        clipboardSections.push(
+            "=== Context Snapshot ===\n".concat(normalizeToString(contextData))
+        );
+    }
+    if (hasContextReference) {
+        clipboardSections.push(
+            "=== Context Reference ===\n".concat(
+                normalizeToString(contextReference)
+            )
+        );
+    }
+    if (hasPromptReference) {
+        clipboardSections.push(
+            "=== System Prompt Reference ===\n".concat(promptReferencePayload)
+        );
+    }
+
+    currentDebugClipboardText = clipboardSections.join("\n\n");
+
+    const fallbackBody = [
+        `System Instructions:\n${promptText}`,
+        `Context Snapshot:\n${contextText}`,
+        `Context Reference:\n${contextReferenceText}`,
+        `System Prompt Reference:\n${promptReferencePayload}`,
+    ].join("\n\n");
+
+    if (!systemContextModal || !systemContextContent) {
+        window.alert(fallbackBody);
+        return;
+    }
+
     const makeSection = (title, text, options = {}) => {
-        const section = document.createElement("section");
-        section.className = "debug-section";
+        const wrapper = document.createElement("section");
+        wrapper.className = "debug-section";
+
         const heading = document.createElement("h3");
         heading.textContent = title;
+        wrapper.appendChild(heading);
+
         const body = document.createElement("div");
         body.className = "debug-markdown";
-        const markdown = formatMarkdown(text, options);
-        body.innerHTML = renderMarkdown(markdown);
-        section.append(heading, body);
-        return section;
+        body.innerHTML = renderMarkdown(formatMarkdown(text, options));
+        wrapper.appendChild(body);
+
+        return wrapper;
     };
 
-    systemContextContent.append(
-        makeSection("System Instructions", promptText),
+    systemContextContent.innerHTML = "";
+    systemContextContent.appendChild(
+        makeSection("System Instructions", promptText)
+    );
+    systemContextContent.appendChild(
         makeSection("Context Snapshot", contextText, { preferCodeBlock: true })
+    );
+    systemContextContent.appendChild(
+        makeSection("Context Reference", contextReferenceText, {
+            preferCodeBlock: true,
+        })
+    );
+    systemContextContent.appendChild(
+        makeSection("System Prompt Reference", promptReferencePayload, {
+            preferCodeBlock: true,
+        })
     );
 
     if (copySystemContextBtn) {
-        copySystemContextBtn.disabled = currentDebugClipboardText.length === 0;
+        copySystemContextBtn.disabled = clipboardSections.length === 0;
         copySystemContextBtn.textContent = "Copy to clipboard";
     }
 
-    try {
+    if (!systemContextModal.open) {
         systemContextModal.showModal();
-    } catch (error) {
-        window.alert(fallbackBody);
     }
 }
 
@@ -1221,7 +1442,17 @@ function bindEvents() {
                 const debugInfo = messageContextTargetElement
                     ? messageDebugData.get(messageContextTargetElement) || null
                     : null;
-                openSystemContextModal(debugInfo);
+                if (!debugInfo) {
+                    window.alert(
+                        "No debug information is available for this message."
+                    );
+                    return;
+                }
+                openSystemContextModal(debugInfo).catch((error) => {
+                    window.alert(
+                        `Unable to load debug context: ${error.message}`
+                    );
+                });
             }
         });
     }
@@ -1303,7 +1534,10 @@ async function generateInitialGreeting() {
             timestamp,
             conversation_id: data.conversation_id || null,
             system_prompt: data.system_prompt || null,
+            system_prompt_reference: data.system_prompt_reference || null,
             context_snapshot: data.context_snapshot || null,
+            context_reference: data.context_reference || null,
+            message_id: data.message_id || null,
         };
         latestConversationDraft = "";
         if (data.conversation_id) {

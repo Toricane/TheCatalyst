@@ -6,7 +6,7 @@ import json
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from math import ceil
-from typing import Any, Dict, Generator, List, Optional, Tuple
+from typing import Any, Dict, Generator, List, Optional
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Response
@@ -21,6 +21,7 @@ from .catalyst_ai import (
     _make_api_call_with_retry,
     generate_catalyst_response,
     get_session_instructions,
+    reconstruct_system_prompt,
     update_ltm_memory,
 )
 from .config import ALT_MODEL_NAME, GEMINI_API_KEY, MODEL_NAME, SHOW_THINKING
@@ -30,6 +31,8 @@ from .memory_manager import (
     check_for_missed_sessions,
     get_current_ltm_profile,
     get_goals_hierarchy,
+    get_ltm_profile_by_id,
+    get_ltm_profile_by_version,
 )
 from .rate_limiter import estimate_tokens, rate_limiter
 from .schemas import (
@@ -81,6 +84,138 @@ def _parse_iso_timestamp(value: Optional[str]) -> Optional[datetime]:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _serialize_goal_record(goal: models.Goal) -> Dict[str, Any]:
+    created_at_local = to_local(goal.created_at) if goal.created_at else None
+    return {
+        "id": goal.id,
+        "description": goal.description,
+        "metric": goal.metric,
+        "timeline": goal.timeline,
+        "rank": goal.rank,
+        "created_at": created_at_local.isoformat() if created_at_local else None,
+    }
+
+
+def _build_context_reference(
+    sources: List[Dict[str, Any]],
+    goals: List[Dict[str, Any]],
+    ltm_profile: Dict[str, Any],
+    missed_info: Dict[str, Any],
+) -> Dict[str, Any]:
+    sequence: List[Dict[str, Any]] = []
+
+    for source in sources:
+        source_type = source.get("type")
+        if source_type == "record":
+            record_id = source.get("record_id")
+            if record_id is not None:
+                sequence.append({"type": "record", "id": int(record_id)})
+        elif source_type == "inline":
+            entry = source.get("entry")
+            if entry:
+                sequence.append({"type": "inline", "entry": dict(entry)})
+
+    ltm_meta = ltm_profile.get("_meta", {}) if isinstance(ltm_profile, dict) else {}
+
+    return {
+        "sequence": sequence,
+        "ltm_profile": {
+            "id": ltm_meta.get("id"),
+            "version": ltm_meta.get("version"),
+            "updated_at": ltm_meta.get("updated_at"),
+        },
+        "goal_ids": [goal.get("id") for goal in goals if goal.get("id") is not None],
+        "missed_sessions": missed_info.get("missed_sessions", []),
+        "generated_at": utc_now().isoformat(),
+    }
+
+
+def _reconstruct_context_from_reference(
+    db: Session, reference: Dict[str, Any]
+) -> Dict[str, Any]:
+    sequence: List[Dict[str, Any]] = reference.get("sequence") or []
+
+    record_ids = [
+        item.get("id")
+        for item in sequence
+        if item.get("type") == "record" and item.get("id") is not None
+    ]
+
+    records_map: Dict[int, models.Conversation] = {}
+    if record_ids:
+        records = (
+            db.query(models.Conversation)
+            .filter(models.Conversation.id.in_(record_ids))
+            .all()
+        )
+        records_map = {record.id: record for record in records}
+
+    recent_entries: List[Dict[str, Any]] = []
+    for item in sequence:
+        item_type = item.get("type")
+        if item_type == "record":
+            record_id = item.get("id")
+            record = records_map.get(record_id)
+            if not record or not record.messages:
+                continue
+            try:
+                payload = json.loads(record.messages)
+            except json.JSONDecodeError:
+                payload = {}
+
+            entry: Dict[str, Any] = {
+                "session_type": record.session_type,
+                "user": (payload.get("user") or ""),
+                "catalyst": (payload.get("catalyst") or ""),
+                "timestamp": payload.get("timestamp")
+                or _message_timestamp(payload, record),
+                "conversation_id": _conversation_id_for_record(record, payload),
+            }
+            if payload.get("initial_greeting"):
+                entry["initial_greeting"] = True
+
+            recent_entries.append(entry)
+
+        elif item_type == "inline":
+            entry = item.get("entry")
+            if entry:
+                recent_entries.append(dict(entry))
+
+    goal_ids = reference.get("goal_ids") or []
+    goals: List[Dict[str, Any]] = []
+    if goal_ids:
+        goal_records = db.query(models.Goal).filter(models.Goal.id.in_(goal_ids)).all()
+        goal_map = {goal.id: goal for goal in goal_records}
+        for goal_id in goal_ids:
+            goal_record = goal_map.get(goal_id)
+            if goal_record:
+                goals.append(_serialize_goal_record(goal_record))
+
+    if not goals:
+        goals = get_goals_hierarchy(db)
+
+    ltm_meta = reference.get("ltm_profile") or {}
+    ltm_profile: Dict[str, Any]
+    profile_id = ltm_meta.get("id")
+    profile_version = ltm_meta.get("version")
+
+    if profile_id:
+        ltm_profile = get_ltm_profile_by_id(db, profile_id)
+    elif profile_version:
+        ltm_profile = get_ltm_profile_by_version(db, profile_version)
+    else:
+        ltm_profile = get_current_ltm_profile(db)
+
+    missed_sessions = reference.get("missed_sessions", [])
+
+    return {
+        "goals": goals,
+        "ltm_profile": ltm_profile,
+        "missed_sessions": missed_sessions,
+        "recent_conversations": recent_entries,
+    }
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -171,24 +306,12 @@ async def initialize_catalyst(
     db.add(tracking)
 
     db.commit()
+    db.refresh(goal_row)
+    db.refresh(profile_row)
 
     context = {
-        "goals": [
-            {
-                "description": goal.description,
-                "metric": goal.metric,
-                "timeline": goal.timeline,
-                "rank": goal.rank,
-            }
-        ],
-        "ltm_profile": {
-            "full_text": initial_profile,
-            "patterns": "",
-            "challenges": "",
-            "breakthroughs": "",
-            "personality": "",
-            "current_state": "",
-        },
+        "goals": [_serialize_goal_record(goal_row)],
+        "ltm_profile": get_ltm_profile_by_id(db, profile_row.id),
     }
 
     goal_prompt = (
@@ -207,6 +330,13 @@ async def initialize_catalyst(
     conversation_id = str(uuid4())
     timestamp = utc_now().isoformat()
 
+    context_reference = _build_context_reference(
+        sources=[],
+        goals=context.get("goals", []),
+        ltm_profile=context.get("ltm_profile", {}),
+        missed_info={"missed_sessions": []},
+    )
+
     conversation_snapshot = models.Conversation(
         session_type=SessionType.INITIALIZATION.value,
         conversation_uuid=conversation_id,
@@ -219,13 +349,15 @@ async def initialize_catalyst(
                 "model": response.get("model"),
                 "conversation_id": conversation_id,
                 "is_conversation_start": True,
-                "system_prompt": response.get("system_prompt"),
-                "context_snapshot": response.get("context_snapshot"),
+                "system_prompt_reference": response.get("system_prompt_reference"),
+                "context_reference": context_reference,
             }
         ),
         thinking_log=response.get("thinking") or "",
     )
     db.add(conversation_snapshot)
+    db.flush()
+    message_id = conversation_snapshot.id
     db.commit()
 
     return ChatResponse(
@@ -233,10 +365,13 @@ async def initialize_catalyst(
         memory_updated=True,
         session_type=SessionType.INITIALIZATION.value,
         conversation_id=conversation_id,
+        message_id=message_id,
         thinking=response.get("thinking") if SHOW_THINKING else None,
         model=response.get("model"),
         system_prompt=response.get("system_prompt"),
         context_snapshot=response.get("context_snapshot"),
+        context_reference=context_reference,
+        system_prompt_reference=response.get("system_prompt_reference"),
     )
 
 
@@ -260,9 +395,7 @@ async def get_initial_greeting(
 
     current_date = local_today()
     current_time = local_now()
-    conversation_entries: List[
-        Tuple[Dict[str, Any], Optional[datetime], Optional[str]]
-    ] = []
+    conversation_entries: List[Dict[str, Any]] = []
     hours_window = 48
     for record in reversed(recent_records):
         messages = json.loads(record.messages) if record.messages else {}
@@ -305,23 +438,29 @@ async def get_initial_greeting(
                 f'Catalyst "{catalyst_snippet or "..."}"'
             )
 
-        conversation_entries.append((entry, created_local, summary_line))
+        conversation_entries.append(
+            {
+                "entry": entry,
+                "created": created_local,
+                "summary": summary_line,
+                "source": {"type": "record", "record_id": record.id},
+            }
+        )
 
-    def _conversation_character_count(
-        items: List[Tuple[Dict[str, Any], Optional[datetime], Optional[str]]],
-    ) -> int:
+    def _conversation_character_count(items: List[Dict[str, Any]]) -> int:
         return sum(
-            len((entry.get("user") or "")) + len((entry.get("catalyst") or ""))
-            for entry, _, _ in items
+            len((item["entry"].get("user") or ""))
+            + len((item["entry"].get("catalyst") or ""))
+            for item in items
         )
 
     total_chars = _conversation_character_count(conversation_entries)
     if total_chars > RECENT_CONVERSATION_CHAR_LIMIT:
         twenty_four_hours_ago = current_time - timedelta(hours=24)
         filtered_entries = [
-            (entry, created_local, summary)
-            for entry, created_local, summary in conversation_entries
-            if created_local and created_local >= twenty_four_hours_ago
+            item
+            for item in conversation_entries
+            if item.get("created") and item["created"] >= twenty_four_hours_ago
         ]
         if filtered_entries:
             conversation_entries = filtered_entries
@@ -329,11 +468,10 @@ async def get_initial_greeting(
             hours_window = min(hours_window, 24)
 
         if total_chars > RECENT_CONVERSATION_CHAR_LIMIT and conversation_entries:
-            trimmed_entries: List[
-                Tuple[Dict[str, Any], Optional[datetime], Optional[str]]
-            ] = []
+            trimmed_entries: List[Dict[str, Any]] = []
             running_total = 0
-            for entry, created_local, summary in reversed(conversation_entries):
+            for item in reversed(conversation_entries):
+                entry = item["entry"]
                 entry_length = len(entry.get("user") or "") + len(
                     entry.get("catalyst") or ""
                 )
@@ -342,19 +480,21 @@ async def get_initial_greeting(
                     and trimmed_entries
                 ):
                     continue
-                trimmed_entries.append((entry, created_local, summary))
+                trimmed_entries.append(item)
                 running_total += entry_length
                 if running_total >= RECENT_CONVERSATION_CHAR_LIMIT:
                     break
             conversation_entries = list(reversed(trimmed_entries))
 
-    recent_conversations = [entry for entry, _, _ in conversation_entries]
+    recent_conversations = [item["entry"] for item in conversation_entries]
     recent_summary_lines = [
-        summary for _, _, summary in conversation_entries if summary
+        item["summary"] for item in conversation_entries if item.get("summary")
     ]
 
     timestamps = [
-        created_local for _, created_local, _ in conversation_entries if created_local
+        item["created"]
+        for item in conversation_entries
+        if item.get("created") is not None
     ]
     if timestamps:
         earliest = min(timestamps)
@@ -384,12 +524,28 @@ async def get_initial_greeting(
 
     print(f"{session_type=}")
 
+    context_sources = [item["source"] for item in conversation_entries]
+
     context = {
         "goals": goals,
         "ltm_profile": ltm_profile,
         "missed_sessions": missed_info.get("missed_sessions", []),
         "recent_conversations": recent_conversations,
     }
+
+    context_reference = _build_context_reference(
+        sources=context_sources,
+        goals=goals,
+        ltm_profile=ltm_profile,
+        missed_info=missed_info,
+    )
+
+    context_reference = _build_context_reference(
+        sources=context_sources,
+        goals=goals,
+        ltm_profile=ltm_profile,
+        missed_info=missed_info,
+    )
 
     # Create a contextual greeting message based on time and user's situation
     if recent_summary_lines:
@@ -446,13 +602,15 @@ Current context:
                 "initial_greeting": True,
                 "conversation_id": conversation_id,
                 "is_conversation_start": True,
-                "system_prompt": response.get("system_prompt"),
-                "context_snapshot": response.get("context_snapshot"),
+                "system_prompt_reference": response.get("system_prompt_reference"),
+                "context_reference": context_reference,
             }
         ),
         thinking_log=response.get("thinking") or "",
     )
     db.add(greeting_record)
+    db.flush()
+    message_id = greeting_record.id
     db.commit()
 
     return ChatResponse(
@@ -460,10 +618,13 @@ Current context:
         memory_updated=False,
         session_type=session_type.value,
         conversation_id=conversation_id,
+        message_id=message_id,
         thinking=response.get("thinking") if SHOW_THINKING else None,
         model=response.get("model"),
         system_prompt=response.get("system_prompt"),
         context_snapshot=response.get("context_snapshot"),
+        context_reference=context_reference,
+        system_prompt_reference=response.get("system_prompt_reference"),
     )
 
 
@@ -517,14 +678,10 @@ async def chat_with_catalyst(
     recent_records = (
         db.query(models.Conversation)
         .order_by(models.Conversation.created_at.desc())
-        # .limit(8)
         .all()
     )
 
-    recent_conversations: List[Dict[str, Any]] = []
-    pending_greetings: List[Dict[str, Any]] = []
-    user_message_seen = False
-
+    raw_entries: List[Dict[str, Any]] = []
     for record in reversed(recent_records):
         try:
             messages = json.loads(record.messages) if record.messages else {}
@@ -547,25 +704,51 @@ async def chat_with_catalyst(
             or (to_local(record.created_at).isoformat() if record.created_at else None),
         }
 
-        if is_initial_greeting:
+        raw_entries.append(
+            {
+                "entry": entry,
+                "record_id": record.id,
+                "is_initial_greeting": is_initial_greeting,
+                "has_user_text": bool(user_text.strip()),
+            }
+        )
+
+    recent_conversations: List[Dict[str, Any]] = []
+    context_sources: List[Dict[str, Any]] = []
+    pending_greetings: List[Dict[str, Any]] = []
+    user_message_seen = False
+
+    for item in raw_entries:
+        if item["is_initial_greeting"]:
             if user_message_seen:
-                recent_conversations.append(entry)
+                recent_conversations.append(item["entry"])
+                context_sources.append(
+                    {"type": "record", "record_id": item["record_id"]}
+                )
             else:
-                pending_greetings.append(entry)
+                pending_greetings.append(item)
             continue
 
-        stripped_user = user_text.strip()
-        if stripped_user and pending_greetings:
-            recent_conversations.extend(pending_greetings)
+        if pending_greetings:
+            for pending in pending_greetings:
+                recent_conversations.append(pending["entry"])
+                context_sources.append(
+                    {"type": "record", "record_id": pending["record_id"]}
+                )
             pending_greetings = []
 
-        if stripped_user:
+        if item["has_user_text"]:
             user_message_seen = True
 
-        recent_conversations.append(entry)
+        recent_conversations.append(item["entry"])
+        context_sources.append({"type": "record", "record_id": item["record_id"]})
 
     if user_message_seen and pending_greetings:
-        recent_conversations.extend(pending_greetings)
+        for pending in pending_greetings:
+            recent_conversations.append(pending["entry"])
+            context_sources.append(
+                {"type": "record", "record_id": pending["record_id"]}
+            )
 
     greeting_payload = message.initial_greeting
     greeting_session_value: Optional[str] = None
@@ -581,16 +764,16 @@ async def chat_with_catalyst(
         if greeting_payload.conversation_id is None:
             greeting_payload.conversation_id = conversation_id
 
-        recent_conversations.append(
-            {
-                "session_type": greeting_session_value,
-                "user": "",
-                "catalyst": greeting_payload.text,
-                "timestamp": greeting_timestamp,
-                "conversation_id": conversation_id,
-                "initial_greeting": True,
-            }
-        )
+        inline_entry = {
+            "session_type": greeting_session_value,
+            "user": "",
+            "catalyst": greeting_payload.text,
+            "timestamp": greeting_timestamp,
+            "conversation_id": conversation_id,
+            "initial_greeting": True,
+        }
+        recent_conversations.append(inline_entry)
+        context_sources.append({"type": "inline", "entry": dict(inline_entry)})
 
     context = {
         "goals": goals,
@@ -598,6 +781,13 @@ async def chat_with_catalyst(
         "missed_sessions": missed_info.get("missed_sessions", []),
         "recent_conversations": recent_conversations,
     }
+
+    context_reference = _build_context_reference(
+        sources=context_sources,
+        goals=goals,
+        ltm_profile=ltm_profile,
+        missed_info=missed_info,
+    )
 
     response = await generate_catalyst_response(
         message.message, actual_session, context
@@ -629,6 +819,9 @@ async def chat_with_catalyst(
                     break
 
         if not greeting_already_saved:
+            greeting_reference = getattr(
+                greeting_payload, "context_reference", context_reference
+            )
             greeting_record = models.Conversation(
                 session_type=greeting_session_value,
                 conversation_uuid=greeting_conversation_id,
@@ -642,12 +835,10 @@ async def chat_with_catalyst(
                         "initial_greeting": True,
                         "conversation_id": greeting_conversation_id,
                         "is_conversation_start": True,
-                        "system_prompt": getattr(
-                            greeting_payload, "system_prompt", None
+                        "system_prompt_reference": getattr(
+                            greeting_payload, "system_prompt_reference", None
                         ),
-                        "context_snapshot": getattr(
-                            greeting_payload, "context_snapshot", None
-                        ),
+                        "context_reference": greeting_reference,
                     }
                 ),
                 thinking_log="",
@@ -670,13 +861,15 @@ async def chat_with_catalyst(
                 "model": response.get("model"),
                 "conversation_id": conversation_id,
                 "is_conversation_start": created_new_conversation,
-                "system_prompt": response.get("system_prompt"),
-                "context_snapshot": response.get("context_snapshot"),
+                "system_prompt_reference": response.get("system_prompt_reference"),
+                "context_reference": context_reference,
             }
         ),
         thinking_log=response.get("thinking") or "",
     )
     db.add(conversation)
+    db.flush()
+    message_id = conversation.id
 
     if actual_session in {SessionType.MORNING, SessionType.EVENING}:
         update_session_tracking(actual_session.value)
@@ -722,10 +915,13 @@ async def chat_with_catalyst(
         memory_updated=memory_updated,
         session_type=actual_session.value,
         conversation_id=conversation_id,
+        message_id=message_id,
         thinking=response.get("thinking") if SHOW_THINKING else None,
         model=response.get("model"),
         system_prompt=response.get("system_prompt"),
         context_snapshot=response.get("context_snapshot"),
+        context_reference=context_reference,
+        system_prompt_reference=response.get("system_prompt_reference"),
     )
 
 
@@ -1063,6 +1259,8 @@ async def get_conversation_transcript(
                     "content": user_text,
                     "timestamp": timestamp_iso,
                     "session_type": record.session_type,
+                    "message_id": record.id,
+                    "conversation_id": record_conversation_id,
                 }
             )
 
@@ -1077,7 +1275,11 @@ async def get_conversation_transcript(
                     "thinking": record.thinking_log or None,
                     "function_calls": messages.get("function_calls", []),
                     "system_prompt": messages.get("system_prompt"),
+                    "system_prompt_reference": messages.get("system_prompt_reference"),
                     "context_snapshot": messages.get("context_snapshot"),
+                    "context_reference": messages.get("context_reference"),
+                    "message_id": record.id,
+                    "conversation_id": record_conversation_id,
                 }
             )
 
@@ -1142,6 +1344,105 @@ async def delete_conversation(
 
     db.commit()
     return Response(status_code=204)
+
+
+@app.get("/conversations/{conversation_id}/messages/{message_id}/context")
+async def get_message_context(
+    conversation_id: str,
+    message_id: int,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    record = (
+        db.query(models.Conversation)
+        .filter(models.Conversation.id == message_id)
+        .one_or_none()
+    )
+
+    if record is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    try:
+        payload = json.loads(record.messages) if record.messages else {}
+    except json.JSONDecodeError:
+        payload = {}
+
+    record_conversation_id = _conversation_id_for_record(record, payload)
+    if record_conversation_id != conversation_id:
+        raise HTTPException(status_code=404, detail="Message not part of conversation")
+
+    reference = payload.get("context_reference")
+    snapshot = payload.get("context_snapshot")
+    system_prompt = payload.get("system_prompt")
+    system_prompt_reference = payload.get("system_prompt_reference")
+
+    if reference:
+        context_payload = _reconstruct_context_from_reference(db, reference)
+    elif snapshot is not None:
+        context_payload = snapshot
+    else:
+        context_payload = None
+
+    runtime_base_metadata: Optional[Dict[str, Any]] = None
+    checksum_match: Optional[bool] = None
+
+    context_for_prompt = context_payload or snapshot
+    if system_prompt_reference and context_for_prompt:
+        session_value = (
+            (
+                system_prompt_reference.get("session_type")
+                if isinstance(system_prompt_reference, dict)
+                else None
+            )
+            or record.session_type
+            or SessionType.GENERAL.value
+        )
+
+        try:
+            session_enum = SessionType(session_value)
+        except ValueError:
+            session_enum = SessionType.GENERAL
+
+        try:
+            reconstructed_prompt, runtime_base_metadata = reconstruct_system_prompt(
+                session_enum,
+                context_for_prompt,
+                system_prompt_reference
+                if isinstance(system_prompt_reference, dict)
+                else None,
+            )
+        except Exception:  # pragma: no cover - defensive
+            reconstructed_prompt = None
+            runtime_base_metadata = None
+
+        if system_prompt is None:
+            system_prompt = reconstructed_prompt
+
+        stored_base = (
+            system_prompt_reference.get("base")
+            if isinstance(system_prompt_reference, dict)
+            else None
+        )
+        if (
+            runtime_base_metadata
+            and isinstance(stored_base, dict)
+            and stored_base.get("checksum")
+            and runtime_base_metadata.get("checksum")
+        ):
+            checksum_match = (
+                stored_base["checksum"] == runtime_base_metadata["checksum"]
+            )
+
+    return {
+        "conversation_id": conversation_id,
+        "message_id": message_id,
+        "context": context_payload,
+        "reference": reference,
+        "snapshot": snapshot,
+        "system_prompt": system_prompt,
+        "system_prompt_reference": system_prompt_reference,
+        "system_prompt_runtime_base": runtime_base_metadata,
+        "system_prompt_checksum_match": checksum_match,
+    }
 
 
 @app.get("/test/functions")

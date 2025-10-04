@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
@@ -11,6 +11,43 @@ from sqlalchemy.orm import Session
 from .config import CATCH_UP_THRESHOLD_HOURS
 from .models import Goal, LTMProfile, SessionTracking
 from .time_utils import ensure_utc, to_local, utc_now
+
+
+def serialize_ltm_profile(profile: Optional[LTMProfile]) -> Dict[str, Any]:
+    """Serialize an ``LTMProfile`` row into the structure used by the AI context."""
+
+    if not profile:
+        return {
+            "full_text": "",
+            "patterns": "",
+            "challenges": "",
+            "breakthroughs": "",
+            "personality": "",
+            "current_state": "",
+            "_meta": {
+                "id": None,
+                "version": None,
+                "updated_at": None,
+                "token_count": None,
+            },
+        }
+
+    local_updated_at = to_local(profile.last_updated) if profile.last_updated else None
+
+    return {
+        "full_text": profile.summary_text or "",
+        "patterns": profile.patterns_section or "",
+        "challenges": profile.challenges_section or "",
+        "breakthroughs": profile.breakthroughs_section or "",
+        "personality": profile.personality_section or "",
+        "current_state": profile.current_state_section or "",
+        "_meta": {
+            "id": profile.id,
+            "version": profile.version,
+            "updated_at": local_updated_at.isoformat() if local_updated_at else None,
+            "token_count": profile.token_count,
+        },
+    }
 
 
 def compress_old_memories(text: str, age_days: int) -> str:
@@ -34,27 +71,44 @@ def compress_old_memories(text: str, age_days: int) -> str:
     return f"{text[:200]}..." if len(text) > 200 else text
 
 
-def get_current_ltm_profile(session: Session) -> Dict[str, str]:
+def get_current_ltm_profile(session: Session) -> Dict[str, Any]:
     """Retrieve the latest long-term memory profile."""
     profile = session.query(LTMProfile).order_by(desc(LTMProfile.version)).first()
-    if not profile:
-        return {
-            "full_text": "",
-            "patterns": "",
-            "challenges": "",
-            "breakthroughs": "",
-            "personality": "",
-            "current_state": "",
-        }
+    return serialize_ltm_profile(profile)
 
-    return {
-        "full_text": profile.summary_text or "",
-        "patterns": profile.patterns_section or "",
-        "challenges": profile.challenges_section or "",
-        "breakthroughs": profile.breakthroughs_section or "",
-        "personality": profile.personality_section or "",
-        "current_state": profile.current_state_section or "",
-    }
+
+def get_ltm_profile_by_id(
+    session: Session, profile_id: Optional[int]
+) -> Dict[str, Any]:
+    """Fetch a specific long-term memory profile by primary key."""
+    if not profile_id:
+        return serialize_ltm_profile(None)
+
+    profile = (
+        session.query(LTMProfile)
+        .filter(LTMProfile.id == profile_id)
+        .order_by(desc(LTMProfile.version))
+        .first()
+    )
+    return serialize_ltm_profile(profile)
+
+
+def get_ltm_profile_by_version(
+    session: Session, version: Optional[int]
+) -> Dict[str, Any]:
+    """Fetch the most recent profile matching a given version number."""
+    if not version:
+        return serialize_ltm_profile(None)
+
+    profile = (
+        session.query(LTMProfile)
+        .filter(LTMProfile.version == version)
+        .order_by(desc(LTMProfile.last_updated))
+        .first()
+    )
+    if profile:
+        return serialize_ltm_profile(profile)
+    return serialize_ltm_profile(None)
 
 
 def get_goals_hierarchy(session: Session) -> List[Dict[str, Any]]:
