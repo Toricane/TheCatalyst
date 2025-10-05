@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from math import ceil
@@ -11,6 +12,7 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from google import genai
 from google.genai import types
 from sqlalchemy import func
@@ -49,6 +51,30 @@ from .time_utils import local_now, local_today, to_local, utc_now
 
 RECENT_CONVERSATION_CHAR_LIMIT = 24000
 
+SESSION_LABELS_MAP = {
+    SessionType.MORNING.value: "Morning",
+    SessionType.EVENING.value: "Evening",
+    SessionType.GENERAL.value: "General",
+    SessionType.CATCH_UP.value: "Catch-up",
+    SessionType.INITIALIZATION.value: "Initialization",
+}
+
+ROLE_ICONS = {
+    "user": "👤",
+    "assistant": "🤖",
+    "catalyst": "🤖",
+    "system": "🛰️",
+    "tool": "🛠️",
+}
+
+SESSION_LABELS = {
+    SessionType.MORNING.value: "Morning",
+    SessionType.EVENING.value: "Evening",
+    SessionType.GENERAL.value: "General",
+    SessionType.CATCH_UP.value: "Catch-up",
+    SessionType.INITIALIZATION.value: "Initialization",
+}
+
 
 def _conversation_id_for_record(
     record: models.Conversation, messages: Dict[str, Any]
@@ -86,6 +112,224 @@ def _parse_iso_timestamp(value: Optional[str]) -> Optional[datetime]:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _conversation_session_label(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, SessionType):
+        normalized = value.value
+    else:
+        normalized = str(value)
+    if normalized in SESSION_LABELS:
+        return SESSION_LABELS[normalized]
+    return normalized.replace("_", " ").title()
+
+
+def _format_markdown_timestamp(value: Optional[str]) -> str:
+    parsed = _parse_iso_timestamp(value)
+    if not parsed:
+        return "Unknown time"
+
+    localized = to_local(parsed) or parsed.astimezone()
+
+    month = localized.strftime("%b")
+    day = localized.day
+    year = localized.year
+    time_part = localized.strftime("%I:%M %p").lstrip("0")
+    time_part = time_part.replace("AM", "a.m.").replace("PM", "p.m.")
+
+    return f"{month} {day}, {year}, {time_part}"
+
+
+def _build_conversation_markdown(
+    transcript: List[Dict[str, Any]], metadata: Dict[str, Any]
+) -> str:
+    lines: List[str] = ["# The Catalyst Conversation"]
+
+    summary_lines: List[str] = []
+    started_at = metadata.get("started_at")
+    updated_at = metadata.get("updated_at")
+    if started_at:
+        summary_lines.append(f"- Started: {_format_markdown_timestamp(started_at)}")
+    if updated_at and updated_at != started_at:
+        summary_lines.append(
+            f"- Last updated: {_format_markdown_timestamp(updated_at)}"
+        )
+    message_count = metadata.get("message_count")
+    if message_count:
+        summary_lines.append(f"- Messages: {message_count}")
+    session_types = metadata.get("session_types") or []
+    if session_types:
+        readable_sessions = ", ".join(
+            filter(
+                None, (_conversation_session_label(value) for value in session_types)
+            )
+        )
+        if readable_sessions:
+            summary_lines.append(f"- Sessions: {readable_sessions}")
+
+    if summary_lines:
+        lines.append("")
+        lines.append("## Summary")
+        lines.append("")
+        lines.extend(summary_lines)
+        lines.append("")
+
+    if not transcript:
+        lines.append("_No messages in this conversation yet._")
+        return "\n".join(lines).strip() + "\n"
+
+    for entry in transcript:
+        content = (entry.get("content") or "").strip()
+        if not content:
+            continue
+
+        timestamp_label = entry.get("timestamp")
+        session_label = _conversation_session_label(entry.get("session_type"))
+
+        meta_parts: List[str] = []
+        if timestamp_label:
+            meta_parts.append(_format_markdown_timestamp(timestamp_label))
+        if session_label:
+            meta_parts.append(session_label)
+
+        meta_display = " • ".join(meta_parts)
+
+        role = entry.get("role")
+        if role == "catalyst":
+            model_label = entry.get("model") or "The Catalyst"
+            heading = f"### 🤖 {model_label}"
+            if meta_display:
+                heading = f"{heading} • {meta_display}"
+        elif role == "user":
+            heading = "### 👤"
+            if meta_display:
+                heading = f"{heading} {meta_display}"
+        else:
+            label = str(role or "message").replace("_", " ").title()
+            heading = f"### 💬 {label}"
+            if meta_display:
+                heading = f"{heading} • {meta_display}"
+
+        lines.append(heading)
+        lines.append("")
+        lines.append(content.replace("\r\n", "\n"))
+        lines.append("")
+
+    return "\n".join(lines).strip() + "\n"
+
+
+def _suggest_export_filename(metadata: Dict[str, Any], conversation_id: str) -> str:
+    timestamp_source = metadata.get("started_at") or metadata.get("updated_at")
+    parsed = _parse_iso_timestamp(timestamp_source)
+    if parsed:
+        localized = to_local(parsed) or parsed.astimezone()
+        date_part = localized.strftime("%Y%m%d")
+        time_part = localized.strftime("%H%M")
+        base = f"{date_part}-{time_part}"
+    else:
+        base = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d")
+
+    safe_id = "".join(ch for ch in conversation_id if ch.isalnum())[:8]
+    suffix = f"-{safe_id}" if safe_id else ""
+    return f"catalyst-conversation-{base}{suffix}.md"
+
+
+def _load_conversation_thread(
+    db: Session, conversation_id: str
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    records = (
+        db.query(models.Conversation)
+        .order_by(models.Conversation.created_at.asc())
+        .all()
+    )
+
+    transcript: List[Dict[str, Any]] = []
+    session_types: set[str] = set()
+    started_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    message_count = 0
+
+    for record in records:
+        if not record.messages:
+            continue
+
+        try:
+            messages = json.loads(record.messages)
+        except json.JSONDecodeError:
+            messages = {}
+
+        record_conversation_id = _conversation_id_for_record(record, messages)
+        if record_conversation_id != conversation_id:
+            continue
+
+        timestamp_iso = _message_timestamp(messages, record)
+        timestamp_dt = _parse_iso_timestamp(timestamp_iso) or to_local(
+            record.created_at
+        )
+
+        if timestamp_dt:
+            if started_at is None or timestamp_dt < started_at:
+                started_at = timestamp_dt
+            if updated_at is None or timestamp_dt > updated_at:
+                updated_at = timestamp_dt
+
+        if record.session_type:
+            session_types.add(record.session_type)
+
+        message_count += 1
+
+        user_text = (messages.get("user") or "").strip()
+        catalyst_text = (messages.get("catalyst") or "").strip()
+
+        if user_text:
+            transcript.append(
+                {
+                    "role": "user",
+                    "content": user_text,
+                    "timestamp": timestamp_iso,
+                    "session_type": record.session_type,
+                    "message_id": record.id,
+                    "conversation_id": record_conversation_id,
+                }
+            )
+
+        if catalyst_text:
+            transcript.append(
+                {
+                    "role": "catalyst",
+                    "content": catalyst_text,
+                    "timestamp": timestamp_iso,
+                    "session_type": record.session_type,
+                    "model": messages.get("model"),
+                    "thinking": record.thinking_log or None,
+                    "function_calls": messages.get("function_calls", []),
+                    "system_prompt": messages.get("system_prompt"),
+                    "system_prompt_reference": messages.get("system_prompt_reference"),
+                    "context_snapshot": messages.get("context_snapshot"),
+                    "context_reference": messages.get("context_reference"),
+                    "message_id": record.id,
+                    "conversation_id": record_conversation_id,
+                }
+            )
+
+    if message_count == 0:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    transcript.sort(
+        key=lambda item: _parse_iso_timestamp(item.get("timestamp"))
+        or datetime.min.replace(tzinfo=timezone.utc)
+    )
+
+    metadata = {
+        "message_count": message_count,
+        "session_types": sorted(session_types),
+        "started_at": started_at.isoformat() if started_at else None,
+        "updated_at": updated_at.isoformat() if updated_at else None,
+    }
+
+    return transcript, metadata
 
 
 def _serialize_goal_record(goal: models.Goal) -> Dict[str, Any]:
@@ -1264,10 +1508,7 @@ async def list_conversations(
     }
 
 
-@app.get("/conversations/{conversation_id}")
-async def get_conversation_transcript(
-    conversation_id: str, db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+def _load_conversation_transcript(db: Session, conversation_id: str) -> Dict[str, Any]:
     records = (
         db.query(models.Conversation)
         .order_by(models.Conversation.created_at.asc())
@@ -1363,47 +1604,128 @@ async def get_conversation_transcript(
     }
 
 
-@app.delete("/conversations/{conversation_id}", status_code=204)
-async def delete_conversation(
+@app.get("/conversations/{conversation_id}")
+async def get_conversation_transcript(
     conversation_id: str, db: Session = Depends(get_db)
-) -> Response:
-    deleted_count = 0
+) -> Dict[str, Any]:
+    return _load_conversation_transcript(db, conversation_id)
 
-    matching_records = (
-        db.query(models.Conversation)
-        .filter(models.Conversation.conversation_uuid == conversation_id)
-        .all()
+
+def _format_session_label(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    return SESSION_LABELS_MAP.get(value, value.replace("_", " ").title())
+
+
+def _format_markdown_timestamp(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    parsed = _parse_iso_timestamp(value)
+    if not parsed:
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return value
+    local_dt = parsed.astimezone()
+    month = local_dt.strftime("%b")
+    day = local_dt.day
+    year = local_dt.year
+    hour = local_dt.strftime("%I").lstrip("0") or "0"
+    minute = local_dt.strftime("%M")
+    meridiem = local_dt.strftime("%p").lower()
+    meridiem = meridiem.replace("am", "a.m.").replace("pm", "p.m.")
+    return f"{month} {day}, {year}, {hour}:{minute} {meridiem}"
+
+
+def _build_conversation_filename(conversation_id: str, metadata: Dict[str, Any]) -> str:
+    timestamp_source = metadata.get("updated_at") or metadata.get("started_at")
+    timestamp = _parse_iso_timestamp(timestamp_source) if timestamp_source else None
+    if not timestamp:
+        timestamp = utc_now()
+    local_timestamp = timestamp.astimezone()
+    stamp = local_timestamp.strftime("%Y%m%d-%H%M")
+    safe_fragment = re.sub(r"[^a-zA-Z0-9]+", "-", conversation_id).strip("-")
+    if not safe_fragment:
+        safe_fragment = "conversation"
+    return f"catalyst-{stamp}-{safe_fragment[:16].lower()}.md"
+
+
+def _generate_markdown_export(payload: Dict[str, Any]) -> str:
+    conversation_id = payload.get("conversation_id", "")
+    metadata = payload.get("metadata", {})
+    messages = payload.get("messages", [])
+
+    lines: List[str] = ["# Conversation Export", ""]
+    if conversation_id:
+        lines.append(f"- **Conversation ID:** `{conversation_id}`")
+
+    message_count = metadata.get("message_count")
+    if message_count:
+        lines.append(f"- **Messages:** {message_count}")
+
+    started = metadata.get("started_at")
+    formatted_started = _format_markdown_timestamp(started)
+    if formatted_started:
+        lines.append(f"- **Started:** {formatted_started}")
+
+    updated = metadata.get("updated_at")
+    formatted_updated = _format_markdown_timestamp(updated)
+    if formatted_updated:
+        lines.append(f"- **Last activity:** {formatted_updated}")
+
+    lines.append(f"- **Exported:** {_format_markdown_timestamp(utc_now().isoformat())}")
+    lines.extend(["", "---", ""])
+
+    for message in messages:
+        role = message.get("role", "")
+        icon = ROLE_ICONS.get(role, "💬")
+        session_label = _format_session_label(message.get("session_type"))
+        timestamp_text = _format_markdown_timestamp(message.get("timestamp"))
+
+        if role == "catalyst":
+            primary = message.get("model") or "The Catalyst"
+        else:
+            primary = timestamp_text or "User"
+
+        heading_parts = [primary]
+        if role == "catalyst" and timestamp_text:
+            heading_parts.append(timestamp_text)
+        if role == "catalyst" and session_label:
+            heading_parts.append(session_label)
+        if role != "catalyst":
+            if timestamp_text and primary != timestamp_text:
+                heading_parts.append(timestamp_text)
+            if session_label:
+                heading_parts.append(session_label)
+
+        heading = " • ".join(part for part in heading_parts if part)
+        lines.append(f"### {icon} {heading}")
+        lines.append("")
+
+        content = (message.get("content") or "").strip()
+        if not content:
+            lines.append("_No content recorded._")
+        else:
+            lines.append(content)
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+@app.get(
+    "/conversations/{conversation_id}/export",
+    response_class=PlainTextResponse,
+)
+async def export_conversation_markdown(
+    conversation_id: str, db: Session = Depends(get_db)
+) -> PlainTextResponse:
+    payload = _load_conversation_transcript(db, conversation_id)
+    markdown = _generate_markdown_export(payload)
+    filename = _build_conversation_filename(
+        conversation_id, payload.get("metadata", {})
     )
-
-    for record in matching_records:
-        db.delete(record)
-        deleted_count += 1
-
-    if deleted_count == 0:
-        legacy_records = (
-            db.query(models.Conversation)
-            .filter(models.Conversation.conversation_uuid.is_(None))
-            .all()
-        )
-
-        for record in legacy_records:
-            if not record.messages:
-                continue
-            try:
-                payload = json.loads(record.messages)
-            except json.JSONDecodeError:
-                payload = {}
-
-            derived_id = _conversation_id_for_record(record, payload)
-            if derived_id == conversation_id:
-                db.delete(record)
-                deleted_count += 1
-
-    if deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    db.commit()
-    return Response(status_code=204)
+    headers = {"X-Conversation-Suggested-Filename": filename}
+    return PlainTextResponse(markdown, media_type="text/markdown", headers=headers)
 
 
 @app.get("/conversations/{conversation_id}/messages/{message_id}/context")

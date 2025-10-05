@@ -444,12 +444,91 @@ body::before {
 
 .chat-header {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     gap: 1rem;
     padding: 1.25rem clamp(1.5rem, 4vw, 2.25rem);
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     flex-wrap: wrap;
+}
+
+.chat-header-main {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    flex: 1;
+    min-width: 0;
+}
+
+.chat-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.btn-share {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    border-radius: 0.75rem;
+    padding: 0.55rem 1.1rem;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: linear-gradient(135deg, rgba(255, 107, 53, 0.2), rgba(245, 158, 11, 0.15));
+    color: var(--text-primary);
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.btn-share .btn-icon {
+    font-size: 1rem;
+}
+
+.btn-share:hover,
+.btn-share:focus-visible {
+    outline: none;
+    transform: translateY(-1px);
+    border-color: rgba(255, 255, 255, 0.2);
+    box-shadow: 0 12px 24px rgba(255, 107, 53, 0.3);
+    background: linear-gradient(135deg, rgba(255, 107, 53, 0.28), rgba(245, 158, 11, 0.22));
+}
+
+.btn-share[disabled] {
+    cursor: not-allowed;
+    opacity: 0.6;
+    transform: none;
+    box-shadow: none;
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.08);
+    color: var(--text-muted);
+}
+
+.btn-share.loading {
+    cursor: wait;
+    opacity: 0.8;
+}
+
+.toast-notification {
+    position: fixed;
+    bottom: 2.5rem;
+    right: 2.5rem;
+    padding: 0.85rem 1.2rem;
+    border-radius: 0.75rem;
+    background: rgba(30, 35, 65, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: var(--text-primary);
+    font-weight: 600;
+    box-shadow: 0 20px 40px rgba(10, 14, 39, 0.45);
+    opacity: 0;
+    transform: translateY(12px);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    z-index: 9999;
+    pointer-events: none;
+}
+
+.toast-notification.visible {
+    opacity: 1;
+    transform: translateY(0);
 }
 
 .session-type {
@@ -487,6 +566,7 @@ body::before {
 .chat-info {
     font-size: 0.85rem;
     color: var(--text-muted);
+    min-height: 1.5rem;
 }
 
 #conversationSummary[hidden] {

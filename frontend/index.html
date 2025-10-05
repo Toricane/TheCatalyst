@@ -59,13 +59,27 @@
                 </aside>
                 <section class="chat-container">
                     <div class="chat-header">
-                        <div class="session-type" role="radiogroup" aria-label="Session type">
-                            <button class="session-btn" data-session="morning">🌅 Morning</button>
-                            <button class="session-btn active" data-session="general">💬 General</button>
-                            <button class="session-btn" data-session="evening">🌙 Evening</button>
+                        <div class="chat-header-main">
+                            <div class="session-type" role="radiogroup" aria-label="Session type">
+                                <button class="session-btn" data-session="morning">🌅 Morning</button>
+                                <button class="session-btn active" data-session="general">💬 General</button>
+                                <button class="session-btn" data-session="evening">🌙 Evening</button>
+                            </div>
+                            <div class="chat-info">
+                                <span id="conversationSummary"></span>
+                            </div>
                         </div>
-                        <div class="chat-info">
-                            <span id="conversationSummary"></span>
+                        <div class="chat-header-actions">
+                            <button
+                                id="shareConversationButton"
+                                type="button"
+                                class="btn-share"
+                                title="Export this conversation as Markdown"
+                                disabled
+                            >
+                                <span class="btn-icon" aria-hidden="true">📤</span>
+                                <span class="btn-label">Share</span>
+                            </button>
                         </div>
                     </div>
                     <div class="chat-pane">

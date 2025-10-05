@@ -109,6 +109,24 @@ def test_delete_conversation_removes_history_entries():
         assert second_delete.json().get("detail") == "Conversation not found"
 
 
+def test_export_conversation_as_markdown():
+    _clear_conversations()
+    conversation_id = _create_conversation()
+
+    with client_context() as client:
+        response = client.get(f"/conversations/{conversation_id}/export")
+
+    assert response.status_code == 200
+    assert response.headers.get("content-type", "").startswith("text/markdown")
+    suggested = response.headers.get("X-Conversation-Suggested-Filename")
+    assert suggested and suggested.endswith(".md")
+
+    body = response.text
+    assert "The Catalyst Conversation" in body
+    assert "Test user message" in body
+    assert "Test catalyst response" in body
+
+
 def test_chat_does_not_duplicate_initial_greeting(monkeypatch):
     _clear_conversations()
     existing_conversation_id = str(uuid.uuid4())

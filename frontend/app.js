@@ -57,6 +57,7 @@ const closePreviewBtn = document.getElementById("closePreviewBtn");
 const editButton = document.getElementById("editButton");
 const sendFromPreviewButton = document.getElementById("sendFromPreviewButton");
 const sessionButtons = Array.from(document.querySelectorAll(".session-btn"));
+const shareButton = document.getElementById("shareConversationButton");
 const initModal = document.getElementById("initModal");
 const initButton = document.getElementById("initButton");
 const goalDescription = document.getElementById("goalDescription");
@@ -77,6 +78,7 @@ let contextMenuTargetElement = null;
 let messageContextTargetElement = null;
 const messageDebugData = new WeakMap();
 let currentDebugClipboardText = "";
+let isExportingConversation = false;
 
 if (copySystemContextBtn) {
     copySystemContextBtn.disabled = true;
@@ -637,6 +639,17 @@ function setReadOnlyMode(state) {
             messageInput.focus();
         }
     }
+
+    refreshShareButtonState();
+}
+
+function refreshShareButtonState() {
+    if (!shareButton) return;
+    const hasConversation = Boolean(activeConversationId);
+    shareButton.disabled = !hasConversation || isExportingConversation;
+    shareButton.title = hasConversation
+        ? "Copy this conversation as Markdown"
+        : "Select a conversation to share";
 }
 
 async function fetchJSON(url, options = {}) {
@@ -676,6 +689,80 @@ async function fetchMessageContext(conversationId, messageId) {
     }
 
     return response.json();
+}
+
+async function shareActiveConversation() {
+    if (!shareButton || !activeConversationId || isExportingConversation) {
+        return;
+    }
+
+    isExportingConversation = true;
+    shareButton.classList.add("loading");
+    const label = shareButton.querySelector(".btn-label");
+    const originalLabel = label ? label.textContent : shareButton.textContent;
+    if (label) {
+        label.textContent = "Copying…";
+    } else {
+        shareButton.textContent = "Copying…";
+    }
+    refreshShareButtonState();
+
+    try {
+        if (!navigator.clipboard || !navigator.clipboard.writeText) {
+            throw new Error("Clipboard API unavailable in this browser");
+        }
+
+        const response = await fetch(
+            `${API_BASE_URL}/conversations/${activeConversationId}/export`
+        );
+
+        if (!response.ok) {
+            let detail = response.statusText;
+            try {
+                const data = await response.clone().json();
+                detail = data.detail || JSON.stringify(data);
+            } catch (jsonError) {
+                try {
+                    detail = await response.clone().text();
+                } catch (textError) {
+                    detail = `${response.status} ${response.statusText}`;
+                }
+            }
+            throw new Error(detail);
+        }
+
+        const markdown = await response.text();
+
+        await navigator.clipboard.writeText(markdown);
+
+        const toast = document.createElement("div");
+        toast.className = "toast-notification";
+        toast.textContent = "Conversation copied to clipboard";
+        document.body.appendChild(toast);
+        setTimeout(() => {
+            toast.classList.add("visible");
+        }, 10);
+        setTimeout(() => {
+            toast.classList.remove("visible");
+            setTimeout(() => {
+                toast.remove();
+            }, 300);
+        }, 2500);
+    } catch (error) {
+        appendMessage(
+            "catalyst",
+            `<strong>Share failed:</strong> ${error.message}`
+        );
+    } finally {
+        if (label) {
+            label.textContent = originalLabel;
+        } else {
+            shareButton.textContent = originalLabel || "Share";
+        }
+        shareButton.classList.remove("loading");
+        isExportingConversation = false;
+        refreshShareButtonState();
+    }
 }
 
 async function refreshGoalDisplay() {
@@ -851,6 +938,7 @@ async function selectConversation(
 
     setReadOnlyMode(conversationId !== latestConversationId);
     renderConversationList();
+    refreshShareButtonState();
 }
 
 async function startNewConversation() {
@@ -1457,6 +1545,13 @@ function bindEvents() {
         });
     }
 
+    if (shareButton) {
+        shareButton.addEventListener("click", (event) => {
+            event.preventDefault();
+            shareActiveConversation();
+        });
+    }
+
     if (closeSystemContextBtn) {
         closeSystemContextBtn.addEventListener("click", () => {
             systemContextModal?.close();
@@ -1510,6 +1605,8 @@ function bindEvents() {
     window.addEventListener("blur", closeMenus);
     window.addEventListener("resize", closeMenus);
     window.addEventListener("scroll", closeMenus, true);
+
+    refreshShareButtonState();
 }
 
 async function generateInitialGreeting() {
