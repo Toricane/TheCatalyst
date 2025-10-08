@@ -1508,6 +1508,49 @@ async def list_conversations(
     }
 
 
+@app.delete("/conversations/{conversation_id}", status_code=204)
+async def delete_conversation(
+    conversation_id: str, db: Session = Depends(get_db)
+) -> Response:
+    deleted_count = 0
+
+    matching_records = (
+        db.query(models.Conversation)
+        .filter(models.Conversation.conversation_uuid == conversation_id)
+        .all()
+    )
+
+    for record in matching_records:
+        db.delete(record)
+        deleted_count += 1
+
+    if deleted_count == 0:
+        legacy_records = (
+            db.query(models.Conversation)
+            .filter(models.Conversation.conversation_uuid.is_(None))
+            .all()
+        )
+
+        for record in legacy_records:
+            if not record.messages:
+                continue
+            try:
+                payload = json.loads(record.messages)
+            except json.JSONDecodeError:
+                payload = {}
+
+            derived_id = _conversation_id_for_record(record, payload)
+            if derived_id == conversation_id:
+                db.delete(record)
+                deleted_count += 1
+
+    if deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    db.commit()
+    return Response(status_code=204)
+
+
 def _load_conversation_transcript(db: Session, conversation_id: str) -> Dict[str, Any]:
     records = (
         db.query(models.Conversation)
