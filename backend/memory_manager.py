@@ -9,7 +9,7 @@ from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from .config import CATCH_UP_THRESHOLD_HOURS
-from .models import Goal, Insight, LTMProfile, SessionTracking
+from .models import DailyLog, Goal, Insight, LTMProfile, SessionTracking
 from .time_utils import ensure_utc, to_local, utc_now
 
 
@@ -183,29 +183,37 @@ def get_goals_hierarchy(session: Session) -> List[Dict[str, Any]]:
 def check_for_missed_sessions(session: Session) -> Dict[str, Any]:
     """Determine whether the user has missed morning or evening sessions."""
     tracking = session.query(SessionTracking).order_by(desc(SessionTracking.id)).first()
-    if not tracking:
-        return {"needs_catchup": False, "missed_sessions": []}
+    latest_log = (
+        session.query(DailyLog).order_by(desc(DailyLog.date), desc(DailyLog.id)).first()
+    )
 
     now = utc_now()
     missed_sessions: List[str] = []
+    last_check_in_local = None
 
-    if tracking.last_morning_session:
-        last_morning = ensure_utc(tracking.last_morning_session)
-        delta = now - last_morning
-        if delta.total_seconds() > CATCH_UP_THRESHOLD_HOURS * 3600:
-            missed_sessions.append("morning")
+    if tracking:
+        if tracking.last_morning_session:
+            last_morning = ensure_utc(tracking.last_morning_session)
+            delta = now - last_morning
+            if delta.total_seconds() > CATCH_UP_THRESHOLD_HOURS * 3600:
+                missed_sessions.append("morning")
 
-    if tracking.last_evening_session:
-        last_evening = ensure_utc(tracking.last_evening_session)
-        delta = now - last_evening
-        if delta.total_seconds() > CATCH_UP_THRESHOLD_HOURS * 3600:
-            missed_sessions.append("evening")
+        if tracking.last_evening_session:
+            last_evening = ensure_utc(tracking.last_evening_session)
+            delta = now - last_evening
+            if delta.total_seconds() > CATCH_UP_THRESHOLD_HOURS * 3600:
+                missed_sessions.append("evening")
 
-    last_check_source = tracking.last_morning_session or tracking.last_evening_session
-    last_check_in_local = to_local(last_check_source) if last_check_source else None
+        last_check_source = (
+            tracking.last_morning_session or tracking.last_evening_session
+        )
+        if last_check_source:
+            last_check_in_local = to_local(last_check_source)
+
+    needs_catchup = bool(latest_log) and not bool(latest_log.evening_completed)
 
     return {
-        "needs_catchup": bool(missed_sessions),
+        "needs_catchup": needs_catchup,
         "missed_sessions": missed_sessions,
         "last_check_in": last_check_in_local.isoformat()
         if last_check_in_local
