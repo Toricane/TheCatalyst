@@ -86,8 +86,8 @@ if (copySystemContextBtn) {
 
 function determineSessionTypeByLocalTime() {
     const hour = new Date().getHours();
-    if (hour >= 4 && hour < 10) return "morning";
-    if (hour >= 20 && hour < 24) return "evening";
+    if (hour >= 4 && hour < 12) return "morning";
+    if ((hour >= 20 && hour < 24) || (hour >= 0 && hour < 4)) return "evening";
     return "general";
 }
 
