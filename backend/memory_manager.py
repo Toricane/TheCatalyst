@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import re
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
-from .config import CATCH_UP_THRESHOLD_HOURS
 from .models import DailyLog, Goal, Insight, LTMProfile, SessionTracking
-from .time_utils import ensure_utc, to_local, utc_now
+from .time_utils import ensure_utc, local_now, to_local
 
 
 def serialize_ltm_profile(profile: Optional[LTMProfile]) -> Dict[str, Any]:
@@ -180,40 +180,92 @@ def get_goals_hierarchy(session: Session) -> List[Dict[str, Any]]:
     ]
 
 
+MORNING_WINDOW_START_HOUR = 4
+MORNING_WINDOW_DEADLINE_HOUR = 12
+EVENING_WINDOW_START_HOUR = 20
+EVENING_WINDOW_DEADLINE_HOUR = 4
+
+
+def _combine_local(date_: date, hour: int, tzinfo) -> datetime:
+    """Return a timezone-aware datetime for the given local date and hour."""
+
+    return datetime.combine(date_, time(hour=hour, tzinfo=tzinfo))
+
+
 def check_for_missed_sessions(session: Session) -> Dict[str, Any]:
     """Determine whether the user has missed morning or evening sessions."""
+
     tracking = session.query(SessionTracking).order_by(desc(SessionTracking.id)).first()
     latest_log = (
         session.query(DailyLog).order_by(desc(DailyLog.date), desc(DailyLog.id)).first()
     )
 
-    now = utc_now()
+    now_local = local_now()
+    tzinfo = now_local.tzinfo or timezone.utc
+
+    today = now_local.date()
+    yesterday = today - timedelta(days=1)
+    morning_window_start = _combine_local(today, MORNING_WINDOW_START_HOUR, tzinfo)
+    morning_deadline = _combine_local(today, MORNING_WINDOW_DEADLINE_HOUR, tzinfo)
+    if morning_deadline <= morning_window_start:
+        morning_deadline = morning_deadline + timedelta(days=1)
+    morning_window_closed = now_local >= morning_deadline
+
+    previous_evening_start = _combine_local(
+        yesterday, EVENING_WINDOW_START_HOUR, tzinfo
+    )
+    previous_evening_deadline = _combine_local(
+        today, EVENING_WINDOW_DEADLINE_HOUR, tzinfo
+    )
+    if previous_evening_deadline <= previous_evening_start:
+        previous_evening_deadline = previous_evening_deadline + timedelta(days=1)
+    evening_window_closed = now_local >= previous_evening_deadline
+
     missed_sessions: List[str] = []
     last_check_in_local = None
 
     if tracking:
-        if tracking.last_morning_session:
-            last_morning = ensure_utc(tracking.last_morning_session)
-            delta = now - last_morning
-            if delta.total_seconds() > CATCH_UP_THRESHOLD_HOURS * 3600:
-                missed_sessions.append("morning")
+        last_morning_local = (
+            to_local(tracking.last_morning_session)
+            if tracking.last_morning_session
+            else None
+        )
+        last_evening_local = (
+            to_local(tracking.last_evening_session)
+            if tracking.last_evening_session
+            else None
+        )
 
-        if tracking.last_evening_session:
-            last_evening = ensure_utc(tracking.last_evening_session)
-            delta = now - last_evening
-            if delta.total_seconds() > CATCH_UP_THRESHOLD_HOURS * 3600:
+        if morning_window_closed and (
+            not last_morning_local or last_morning_local < morning_window_start
+        ):
+            missed_sessions.append("morning")
+
+        if evening_window_closed and (
+            not last_evening_local or last_evening_local < previous_evening_start
+        ):
+            missed_sessions.append("evening")
+
+        timestamps = [
+            ensure_utc(value)
+            for value in (tracking.last_morning_session, tracking.last_evening_session)
+            if value
+        ]
+        if timestamps:
+            last_check_in_local = to_local(max(timestamps))
+
+    if not tracking and latest_log:
+        if morning_window_closed and not latest_log.morning_completed:
+            if "morning" not in missed_sessions:
+                missed_sessions.append("morning")
+        if evening_window_closed and not latest_log.evening_completed:
+            if "evening" not in missed_sessions:
                 missed_sessions.append("evening")
 
-        last_check_source = (
-            tracking.last_morning_session or tracking.last_evening_session
-        )
-        if last_check_source:
-            last_check_in_local = to_local(last_check_source)
-
-    needs_catchup = bool(latest_log) and not bool(latest_log.evening_completed)
+    needs_catchup = bool(missed_sessions)
 
     return {
-        "needs_catchup": needs_catchup,
+        "needs_catchup": False,  # needs_catchup,
         "missed_sessions": missed_sessions,
         "last_check_in": last_check_in_local.isoformat()
         if last_check_in_local
