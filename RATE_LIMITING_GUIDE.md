@@ -1,5 +1,7 @@
 # Rate Limiting: What Happens vs What Should Happen
 
+> **Note**: For the underlying rate-limiting architecture of the product, see [AGENTS.md](AGENTS.md#4-api-resilience-rate-limiting--retry-logic). For instructions on how to integrate the rate-limiting UI, see the [frontend playbook](frontend/skills.md).
+
 ## 🎯 **Current State (What Happens Now)**
 
 ### Backend ✅

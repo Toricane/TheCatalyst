@@ -1,5 +1,7 @@
 # Retry Logic Implementation for API Overload Errors
 
+> **Note**: For the AI product's agent recovery design, see [AGENTS.md](AGENTS.md#4-api-resilience-rate-limiting--retry-logic). For instructions on developing and verifying backend retry modules, check out [backend playbook](backend/skills.md) and [testing playbook](tests/skills.md).
+
 ## Overview
 
 This implementation adds robust retry logic to handle 503 "model is overloaded" errors from the Gemini API. The system now automatically retries failed requests with exponential backoff and falls back to an alternative model when needed.

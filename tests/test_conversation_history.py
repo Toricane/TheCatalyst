@@ -122,7 +122,7 @@ def test_export_conversation_as_markdown():
     assert suggested and suggested.endswith(".md")
 
     body = response.text
-    assert "The Catalyst Conversation" in body
+    assert "Conversation Export" in body
     assert "Test user message" in body
     assert "Test catalyst response" in body
 

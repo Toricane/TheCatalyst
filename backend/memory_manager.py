@@ -265,7 +265,7 @@ def check_for_missed_sessions(session: Session) -> Dict[str, Any]:
     needs_catchup = bool(missed_sessions)
 
     return {
-        "needs_catchup": False,  # needs_catchup,
+        "needs_catchup": needs_catchup,
         "missed_sessions": missed_sessions,
         "last_check_in": last_check_in_local.isoformat()
         if last_check_in_local

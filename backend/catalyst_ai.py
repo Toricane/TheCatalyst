@@ -39,6 +39,12 @@ BASE_DELAY = 1.0  # Base delay in seconds
 MAX_DELAY = 60.0  # Maximum delay in seconds
 JITTER_RANGE = 0.1  # Jitter factor for randomization
 
+DEFAULT_FALLBACK_RESPONSE = "I'm here and ready to help you achieve your goals."
+SAFETY_FALLBACK_RESPONSE = (
+    "I want to keep our momentum strong, but the model flagged the last request for "
+    "safety reasons. Let's try reframing it or shifting to a different angle."
+)
+
 if not GEMINI_API_KEY:
     # We don't raise immediately to allow the app to start for offline testing,
     # but we will surface a clearer error when a call is attempted.
@@ -170,12 +176,10 @@ async def _make_api_call_with_retry(
             )
 
             if wait_primary > 0:
-                switched_due_to_limit = True
                 # Prefer the model with the shorter wait time when possible
                 if wait_fallback == 0 or wait_fallback <= wait_primary:
                     current_model = fallback_model
-                else:
-                    current_model = fallback_model
+                    switched_due_to_limit = True
         elif attempt > 0 and not fallback_model:
             # No fallback available, continue with primary
             pass
@@ -295,6 +299,12 @@ async def generate_catalyst_response(
             detail="Gemini client not configured; missing GEMINI_API_KEY",
         )
 
+    fallback_model = (
+        ALT_MODEL_NAME
+        if ALT_MODEL_NAME and ALT_MODEL_NAME != primary_model
+        else None
+    )
+
     base_prompt_text, base_metadata = _load_base_prompt()
     prompt_timestamp = local_now()
     system_prompt = _build_system_prompt(
@@ -340,6 +350,18 @@ async def generate_catalyst_response(
         "initial",
     )
 
+    response, current_model_used, _ = await _retry_once_if_empty(
+        response,
+        current_model_used,
+        client=client,
+        primary_model=primary_model,
+        fallback_model=fallback_model,
+        conversation=conversation,
+        config=config,
+        estimated_tokens=estimated_tokens,
+        context="initial",
+    )
+
     # Handle iterative tool calling if the model requests it.
     for _ in range(3):
         pending_calls = _extract_function_calls(response)
@@ -376,6 +398,18 @@ async def generate_catalyst_response(
             0,
             "follow-up",
         )
+
+        response, current_model_used, _ = await _retry_once_if_empty(
+            response,
+            current_model_used,
+            client=client,
+            primary_model=primary_model,
+            fallback_model=fallback_model,
+            conversation=conversation,
+            config=config,
+            estimated_tokens=0,
+            context="follow-up",
+        )
     else:
         raise HTTPException(
             status_code=500,
@@ -383,14 +417,24 @@ async def generate_catalyst_response(
         )
 
     # Record actual token usage after successful response
-    response_text = getattr(response, "text", "") or ""
-    actual_tokens = estimate_tokens(response_text)
-    await rate_limiter.record_usage(current_model_used, actual_tokens)
+    response_text = _extract_response_text(response)
+    if not response_text:
+        await rate_limiter.record_usage(current_model_used, 0)
+        debug_summary = _summarize_empty_response(response)
+        print(
+            "⚠️  Gemini returned empty response for catalyst reply. "
+            f"Summary: {debug_summary}"
+        )
+        response_text = _derive_fallback_message(response)
+    else:
+        actual_tokens = estimate_tokens(response_text)
+        await rate_limiter.record_usage(current_model_used, actual_tokens)
 
     result = _parse_model_response(
         response,
         executed_calls,
         model_used=current_model_used,
+        response_text=response_text,
     )
 
     result["system_prompt"] = system_prompt
@@ -731,6 +775,154 @@ def _extract_function_calls(response: Any) -> List[Tuple[str, Dict[str, Any]]]:
     return calls
 
 
+def _extract_response_text(response: Any) -> str:
+    texts: List[str] = []
+    for candidate in getattr(response, "candidates", []) or []:
+        content = getattr(candidate, "content", None)
+        if content is not None:
+            parts = getattr(content, "parts", None)
+            if parts:
+                for part in parts:
+                    part_text = getattr(part, "text", None)
+                    if part_text:
+                        texts.append(str(part_text))
+            else:
+                content_text = getattr(content, "text", None)
+                if content_text:
+                    texts.append(str(content_text))
+
+        candidate_text = getattr(candidate, "text", None)
+        if candidate_text:
+            texts.append(str(candidate_text))
+
+    if not texts:
+        fallback_text = getattr(response, "text", None)
+        if fallback_text:
+            texts.append(str(fallback_text))
+
+    return "".join(texts).strip()
+
+
+def _summarize_empty_response(response: Any) -> str:
+    candidate_summaries: List[Dict[str, Any]] = []
+    for idx, candidate in enumerate(getattr(response, "candidates", []) or []):
+        finish_reason = getattr(candidate, "finish_reason", None)
+        safety_ratings = getattr(candidate, "safety_ratings", None)
+        blocked = False
+        if safety_ratings:
+            for rating in safety_ratings:
+                if getattr(rating, "blocked", False):
+                    blocked = True
+                    break
+
+        part_types: List[str] = []
+        content = getattr(candidate, "content", None)
+        parts = getattr(content, "parts", None) if content else None
+        if parts:
+            for part in parts:
+                if getattr(part, "function_call", None):
+                    part_types.append("function_call")
+                elif getattr(part, "function_response", None):
+                    part_types.append("function_response")
+                else:
+                    part_types.append(type(part).__name__)
+
+        candidate_summaries.append(
+            {
+                "index": idx,
+                "finish_reason": str(finish_reason) if finish_reason else None,
+                "blocked": blocked,
+                "part_types": part_types,
+            }
+        )
+
+    prompt_feedback = getattr(response, "prompt_feedback", None)
+    block_reason = (
+        str(getattr(prompt_feedback, "block_reason", None))
+        if prompt_feedback
+        else None
+    )
+
+    debug_payload = {
+        "candidates": candidate_summaries,
+        "prompt_block_reason": block_reason,
+    }
+
+    try:
+        return json.dumps(debug_payload)
+    except TypeError:
+        return str(debug_payload)
+
+
+def _derive_fallback_message(response: Any) -> str:
+    for candidate in getattr(response, "candidates", []) or []:
+        finish_reason = getattr(candidate, "finish_reason", None)
+        if finish_reason and str(finish_reason).upper() == "SAFETY":
+            return SAFETY_FALLBACK_RESPONSE
+        safety_ratings = getattr(candidate, "safety_ratings", None)
+        if safety_ratings:
+            for rating in safety_ratings:
+                if getattr(rating, "blocked", False):
+                    return SAFETY_FALLBACK_RESPONSE
+
+    prompt_feedback = getattr(response, "prompt_feedback", None)
+    if prompt_feedback and getattr(prompt_feedback, "block_reason", None):
+        return SAFETY_FALLBACK_RESPONSE
+
+    return DEFAULT_FALLBACK_RESPONSE
+
+
+def _should_retry_due_to_empty_response(response: Any) -> bool:
+    if _extract_function_calls(response):
+        # Empty text is expected when the model is requesting a tool call.
+        return False
+    return not _extract_response_text(response)
+
+
+async def _retry_once_if_empty(
+    response: Any,
+    model_used: str,
+    *,
+    client: genai.Client,
+    primary_model: str,
+    fallback_model: Optional[str],
+    conversation: List[types.Content],
+    config: types.GenerateContentConfig,
+    estimated_tokens: int,
+    context: str,
+) -> Tuple[Any, str, bool]:
+    if not _should_retry_due_to_empty_response(response):
+        return response, model_used, False
+
+    debug_summary = _summarize_empty_response(response)
+    print(
+        "⚠️  Gemini returned empty response (will retry once). "
+        f"Context: {context}. Summary: {debug_summary}"
+    )
+
+    await rate_limiter.record_usage(model_used, 0)
+
+    retry_model = primary_model
+    retry_context = f"{context}-retry"
+    if fallback_model and fallback_model != model_used:
+        retry_model = fallback_model
+        retry_context = f"{context}-fallback"
+        print(
+            f"↪️  Switching to fallback model '{retry_model}' after empty response"
+        )
+
+    new_response, new_model_used = await _make_api_call_with_retry(
+        client,
+        retry_model,
+        conversation,
+        config,
+        estimated_tokens,
+        retry_context,
+    )
+
+    return new_response, new_model_used, True
+
+
 def _normalise_args(raw_args: Any) -> Dict[str, Any]:
     if raw_args is None:
         return {}
@@ -786,22 +978,20 @@ def _parse_model_response(
     executed_calls: List[Dict[str, Any]],
     *,
     model_used: Optional[str] = None,
+    response_text: Optional[str] = None,
 ) -> Dict[str, Any]:  # pragma: no cover - structure from vendor
-    response_text = ""
 
-    if response.candidates and response.candidates[0].content.parts:
-        for part in response.candidates[0].content.parts:
-            if getattr(part, "text", None):
-                response_text += part.text
+    final_text = (
+        response_text
+        if response_text is not None
+        else _extract_response_text(response)
+    )
 
-    if not response_text and hasattr(response, "text"):
-        response_text = response.text
-
-    if not response_text:
-        response_text = "I'm here and ready to help you achieve your goals."
+    if not final_text:
+        final_text = DEFAULT_FALLBACK_RESPONSE
 
     return {
-        "response": response_text,
+        "response": final_text,
         "memory_updated": bool(executed_calls),
         "function_calls": executed_calls,
         "thinking": json.dumps(executed_calls) if SHOW_THINKING else None,

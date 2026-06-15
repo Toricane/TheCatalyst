@@ -2,6 +2,10 @@
 
 A personalized AI mentor with living memory, designed to be your partner in achieving extraordinary goals. The Catalyst learns from every conversation, adapts to your personality, and provides uniquely tailored guidance.
 
+### 📚 Documentation Quick Links
+- **AI Product Architecture**: See [AGENTS.md](AGENTS.md) for details on memory, prompts, and tone modes.
+- **Developer Playbooks**: Read the root-level [skills.md](skills.md) and directory-level files ([backend/skills.md](backend/skills.md), [frontend/skills.md](frontend/skills.md), [tests/skills.md](tests/skills.md)) to guide your coding agents.
+
 ## 🚀 Features
 
 -   **Adaptive AI Mentor**: Dynamic personality that shifts between tough coach and wise strategist
@@ -30,11 +34,26 @@ A personalized AI mentor with living memory, designed to be your partner in achi
 
 ### Quick Start
 
-1. **Clone and install dependencies**
+1. **Clone the repo, set up the virtual environment, and install dependencies**
 
     ```bash
     git clone <your-repo-url>
     cd TheCatalyst
+    python -m venv venv
+    ```
+
+    *Activate the virtual environment:*
+    - **Windows (PowerShell)**:
+      ```powershell
+      .\venv\Scripts\Activate.ps1
+      ```
+    - **macOS / Linux**:
+      ```bash
+      source venv/bin/activate
+      ```
+
+    *Install packages:*
+    ```bash
     pip install -r requirements.txt
     ```
 

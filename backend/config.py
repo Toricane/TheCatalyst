@@ -21,8 +21,8 @@ DEFAULT_DATABASE_URL = f"sqlite:///{(DATA_DIR / 'catalyst.db').as_posix()}"
 DATABASE_URL: Final[str] = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
 
 # Gemini / AI configuration
-MODEL_NAME: Final[str] = os.getenv("MODEL_NAME", "gemini-2.5-pro")  # gemini-2.5-pro
-ALT_MODEL_NAME: Final[str] = os.getenv("ALT_MODEL_NAME", "gemini-2.5-flash")
+MODEL_NAME: Final[str] = os.getenv("MODEL_NAME", "gemini-2.5-pro")  # no free tier for 3
+ALT_MODEL_NAME: Final[str] = os.getenv("ALT_MODEL_NAME", "gemini-3-flash-preview")
 GEMINI_API_KEY: Final[str] = os.getenv("GEMINI_API_KEY", "")
 SHOW_THINKING: Final[bool] = os.getenv("SHOW_THINKING", "false").lower() == "true"
 
@@ -36,6 +36,7 @@ def _env_prefix(model: str) -> str:
 _DEFAULT_RATE_LIMITS: Final[Dict[str, Dict[str, int]]] = {
     "gemini-2.5-pro": {"rpm": 5, "tpm": 250_000, "rpd": 100},
     "gemini-2.5-flash": {"rpm": 10, "tpm": 250_000, "rpd": 250},
+    "gemini-3-flash-preview": {"rpm": 10, "tpm": 250_000, "rpd": 250},
 }
 
 
