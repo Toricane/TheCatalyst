@@ -97,7 +97,17 @@ class Goal(BaseModel):
     rank: int = 1
 
 
+class GoalCreate(BaseModel):
+    description: str
+    metric: Optional[str] = None
+    timeline: Optional[str] = None
+    rank: int = 2
+
+
 class GoalUpdate(BaseModel):
     goal_id: Optional[int] = None
+    description: Optional[str] = None
+    metric: Optional[str] = None
+    timeline: Optional[str] = None
     rank: Optional[int] = None
     is_active: Optional[bool] = None

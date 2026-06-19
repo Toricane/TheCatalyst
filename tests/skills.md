@@ -47,8 +47,9 @@ This directory contains automated unit and integration tests verifying API endpo
 - [`test_server.py`](test_server.py): Live integration against running server (skips if down).
 - [`test_rate_limiter.py`](test_rate_limiter.py): Evaluates the RPM/TPM queue delays.
 - [`test_retry_logic.py`](test_retry_logic.py): Tests the exponential backoff calculation and fallback model logic.
-- [`test_memory_manager.py`](test_memory_manager.py): Validates profile section parsing and LTM state updates.
-- [`test_functions.py`](test_functions.py): Validates database insertion and session tracking functions.
+- [`test_memory_manager.py`](test_memory_manager.py): Missed-session windows, LTM section parsing.
+- [`test_goals.py`](test_goals.py): Goals CRUD, North Star promotion, `compute_streak`, `/stats` streak wiring.
+- [`test_functions.py`](test_functions.py): Database insertion and session tracking functions.
 
 ---
 

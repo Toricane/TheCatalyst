@@ -19,7 +19,10 @@ A personalized AI mentor with living memory, designed to push you toward your No
 - **Adaptive AI mentor** — Tough Coach, Wise Strategist, and Guardian modes
 - **Living memory** — Short-term conversation context + long-term profile synthesis
 - **Daily rituals** — Morning ignition and evening reflection sessions
-- **Goal tracking** — North Star methodology with structured logging
+- **Goal tracking** — North Star + sub-goal hierarchy; edit via Goals modal (`POST/PUT /goals`)
+- **Momentum stats** — Streaks, ritual calendar, energy/focus trends, wins, and insights (Stats modal)
+- **Settings** — Read-only mentor memory (LTM) and API quota status
+- **Markdown UI** — Chat, panels, and LTM sections render markdown via `marked` + DOMPurify
 - **Function calling** — AI tools update memory, logs, and session streaks
 - **Resilient LLM layer** — CLOD primary (`GPT OSS 120B`), Gemini fallback via LiteLLM
 
@@ -137,14 +140,18 @@ Rate limit overrides: `GPT_OSS_120B_RPD=100`, `GEMINI_2_5_FLASH_RPM=10`, etc. Se
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/` | Status and model name |
-| POST | `/initialize` | Set North Star goal |
+| POST | `/initialize` | First-time North Star setup (409 if goals already exist) |
 | POST | `/initial-greeting` | Session greeting |
 | POST | `/chat` | Main chat |
-| GET | `/goals` | Goal hierarchy |
+| GET | `/goals` | Active goal hierarchy (`north_star` = rank 1) |
+| POST | `/goals` | Add a sub-goal (`rank` default 2) |
+| PUT | `/goals/{id}` | Update description, metric, timeline, rank, or `is_active` |
 | GET | `/memory/profile` | LTM snapshot |
-| GET | `/stats` | Streaks and completion rates |
+| GET | `/logs/recent?days=30` | Daily log rows for trends |
+| GET | `/insights?limit=10` | Stored insights |
+| GET | `/stats` | Streak, sessions, 30-day completion and energy/focus averages |
 | GET | `/health` | System health |
-| GET | `/rate-limit-status` | Quota status for UI |
+| GET | `/rate-limit-status` | Per-model quota status for UI |
 
 ## Testing
 

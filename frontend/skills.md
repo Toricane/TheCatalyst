@@ -7,7 +7,8 @@
 Before modifying any code, review this map to determine which reference file is relevant to your task:
 
 * **Look at [frontend/skills.md](skills.md) (This File)**:
-  - When updating CSS, editing html templates, or integrating the rate limiter status UI.
+  - When updating CSS, editing html templates, modals, or markdown rendering.
+  - When wiring header actions, goals editor, stats/settings panels, or rate-limit UI.
 * **Look at [skills.md](../skills.md) (Root Playbook)**:
   - When starting a new chat session to ground yourself in general project guidelines.
   - When reviewing global conventions, project commands, or the **Self-Improving Skill** workflow.
@@ -24,53 +25,83 @@ Before modifying any code, review this map to determine which reference file is 
 
 ## 1. Purpose
 
-This directory contains the user-facing HTML shell, CSS layouts, and Vanilla Javascript client script for **The Catalyst** chat app.
+This directory contains the user-facing HTML shell, CSS layouts, and Vanilla Javascript client for **The Catalyst** chat app.
 
 ---
 
 ## 2. When to Edit This Directory
 
 * **Edit here when**:
-  - Modifying the styling, alignment, theme colors, or animation keyframes.
-  - Adding UI widgets, feedback prompts, status bars, or streaks counters.
+  - Modifying styling, alignment, theme colors, or animation keyframes.
+  - Adding or changing modals (Goals, Stats, Settings), panels, or markdown-rendered content.
   - Connecting button event listeners or API-fetching wrappers.
 
 * **Do NOT edit here when**:
-  - Fixing server-side API routing.
+  - Fixing server-side API routing or goal/streak business logic.
   - Updating core prompt constraints or SQLite DB fields.
 
 ---
 
 ## 3. Important Files
 
-- [`index.html`](index.html): Chat structure and container nodes.
-- [`style.css`](style.css): Main UI styling sheet. Contains dark mode and typography defaults.
-- [`app.js`](app.js): Application state, chat rendering, fetch wrappers.
-- [`experimental/`](experimental/): Rate-limit UI prototype (not wired into main UI).
+- [`index.html`](index.html): Chat shell, modals (`#goalsModal`, `#statsModal`, `#settingsModal`).
+- [`style.css`](style.css): Main UI styling. Shared `.markdown-content` typography for chat and panels.
+- [`app.js`](app.js): State, chat rendering, goals/stats/settings modals, `fetchJSON` wrappers.
+- [`experimental/`](experimental/): Rate-limit UI prototype for **chat** integration (not yet wired; Settings shows quota via `/rate-limit-status`).
 
 ---
 
-## 4. Local Rules & Architecture
+## 4. UI Surfaces & Element IDs
 
-- **Vanilla CSS Flexible Layouts**: Avoid introducing CSS utility libraries like Tailwind unless explicitly requested. Maintain consistency with the existing color palette (dark theme, glassmorphic card overlays, neon-orange flame details).
-- **Quota UI**: Prototype lives in `experimental/`. Poll `/rate-limit-status` from `app.js` when integrating.
-- **Strict Element IDs**: Ensure all input widgets and event buttons have unique IDs to prevent selenium/browser test breakage.
+| Surface | Trigger | Key IDs |
+|---------|---------|---------|
+| North Star badge | `#goalBadge` click | `#goalDisplay` |
+| Goals modal | Badge, first-time auto-open, Settings → Edit goals | `#goalsModal`, `#goalsInitView`, `#goalsEditView`, `#goalsList`, `#initButton`, `#addGoalButton` |
+| Stats modal | `#statsButton` | `#statsModal`, `#statsContent` |
+| Settings modal | `#settingsButton` | `#settingsModal`, `#settingsContent` |
+| Chat | — | `#chatFeed`, `#messageInput`, `#sendButton` |
+| Debug context | Right-click catalyst message | `#systemContextModal`, `#systemContextContent` |
 
 ---
 
-## 5. Common Mistakes
+## 5. Markdown Rendering
+
+User-facing prose uses **marked** + **DOMPurify** (CDN in `app.js`).
+
+| Helper | Use |
+|--------|-----|
+| `markdownToHtml(text)` | Sanitized HTML string |
+| `markdownBlock(text, extraClass)` | Wrapped `<div class="markdown-content …">` |
+| `plainTextFromMarkdown(text)` | Strip formatting for compact UI (header badge) |
+
+Apply `.markdown-content` (optionally `.compact`) to any container that displays wins, gratitude, LTM sections, insights, conversation previews, or chat bodies. Do **not** use `escapeHtml` for user-authored prose that should support markdown.
+
+Cache-bust `app.js` / `style.css` query params in `index.html` when shipping breaking frontend changes.
+
+---
+
+## 6. Local Rules & Architecture
+
+- **Vanilla CSS**: No Tailwind unless requested. Dark theme, glassmorphic cards, orange accents.
+- **Quota UI**: Settings modal polls `/rate-limit-status`. Full chat integration remains in `experimental/`.
+- **Strict Element IDs**: Keep header and modal controls ID-stable for tests and bindings.
+
+---
+
+## 7. Common Mistakes
 
 - **Mistake**: Overriding element styles using inline CSS.
-  - *Fix*: Declare classes inside `style.css` and toggle them via classList in Javascript.
-- **Mistake**: Making API requests directly instead of going through backend endpoint wrappers.
-  - *Fix*: Always call backend routes only. Never call CLOD or Gemini directly from the browser.
+  - *Fix*: Declare classes inside `style.css` and toggle via `classList`.
+- **Mistake**: Displaying LTM or log text with `escapeHtml` / `textContent` when markdown is expected.
+  - *Fix*: Use `markdownBlock()` or `markdownToHtml()` with `.markdown-content`.
+- **Mistake**: Calling CLOD or Gemini directly from the browser.
+  - *Fix*: Use backend routes only via `fetchJSON`.
 
 ---
 
-## 6. Debugging Playbook
+## 8. Debugging Playbook
 
-1. **Check Developer Console**: Open browser inspect tools (`F12`) to identify syntax errors, blocked HTTP calls, or failed fetch promises.
-2. **Local Port Check**: Ensure frontend is served locally (`python -m http.server 3000` or via `app.py` wrapper) to prevent CORS errors during api calls.
-3. **Verify State Updates**: If streaks, goals, or historical logs don't update after conversation:
-   - Check if the backend response returned success.
-   - Inspect local state variables in `app.js` (e.g. `currentGoal`, `sessionHistory`).
+1. **Developer Console** (`F12`): Syntax errors, failed fetches, stale cached `app.js`.
+2. **Hard refresh**: `Ctrl+Shift+R` after HTML/JS changes (or bump `?v=` on script/link tags).
+3. **Local ports**: Frontend `http://localhost:3000/frontend/`, API `http://localhost:8000` (via `python app.py`).
+4. **Goals not loading**: Confirm `GET /goals` and that `#goalsModal` exists in served `index.html`.

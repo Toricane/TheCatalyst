@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..dependencies import get_db
-from ..memory_manager import get_current_ltm_profile
+from ..memory_manager import compute_streak, get_current_ltm_profile
 from ..time_utils import local_today
 
 router = APIRouter()
@@ -110,10 +110,13 @@ async def get_user_stats(db: Session = Depends(get_db)) -> Dict[str, Any]:
     total_days = stats.total_days or 0
     divisor = total_days if total_days else 1
 
+    streak = compute_streak(db)
+    if tracking:
+        tracking.streak_count = streak
+        db.commit()
+
     return {
-        "streak": tracking.streak_count
-        if tracking and tracking.streak_count is not None
-        else 0,
+        "streak": streak,
         "total_sessions": tracking.total_sessions
         if tracking and tracking.total_sessions is not None
         else 0,

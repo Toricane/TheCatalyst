@@ -100,13 +100,36 @@ Each chat turn uses **one** LiteLLM request. The model returns a **TOON** envelo
 
 **Greeting mode** (`POST /initial-greeting`): plain text only, no envelope, exactly **1 request** (no tools, no empty-retry).
 
-**Session tracking** (`update_session_tracking`, streaks, daily_log completion flags) runs in Python inside [backend/routers/chat.py](backend/routers/chat.py) — not in the model envelope.
+**Session tracking** (`update_session_tracking`, streaks, daily_log completion flags) runs in Python inside [backend/routers/chat.py](backend/routers/chat.py) — not in the model envelope. Streak count is derived from `daily_logs` via `compute_streak()` in [backend/memory_manager.py](backend/memory_manager.py) (consecutive calendar days with `morning_completed` or `evening_completed`); exposed on `GET /stats` and refreshed after each ritual in `update_session_tracking`.
 
 Orchestration lives in [backend/catalyst_ai.py](backend/catalyst_ai.py) (`generate_catalyst_response`, `output_mode`: `structured` | `greeting` | `plain`).
 
 ---
 
-## 4. API Resilience: Rate Limiting & Retry Logic
+## 4. Goals Hierarchy & User Dashboards
+
+North Star is the active goal with **lowest `rank`** (then newest `created_at`). The `goals` table is the source of truth for prompt context; LTM prose can drift until evening synthesis unless the user edits the North Star in the UI.
+
+| Endpoint | Behavior |
+| :--- | :--- |
+| `POST /initialize` | First-time setup only; returns **409** if active goals exist. Seeds LTM, `session_tracking`, and rank-1 goal. |
+| `GET /goals` | `{ goals, north_star, total }` |
+| `POST /goals` | Add sub-goal (`rank` default **2**; rank **1** rejected if North Star already exists) |
+| `PUT /goals/{id}` | Update `description`, `metric`, `timeline`, `rank`, `is_active`. Promoting to rank 1 demotes the prior North Star. Deactivating rank 1 is rejected. |
+
+When rank-1 **content** changes, [backend/memory_manager.py](backend/memory_manager.py) `sync_ltm_north_star()` rewrites the `## Overview & North Star` section in the latest `ltm_profile.summary_text`.
+
+**Frontend panels** (see [frontend/skills.md](frontend/skills.md)):
+
+* **Goals modal** — edit hierarchy, add sub-goals (`#goalsModal`).
+* **Stats modal** — `GET /stats`, `/logs/recent`, `/insights`, `/goals` (`#statsModal`).
+* **Settings modal** — read-only LTM via `/memory/profile`, quota via `/rate-limit-status` (`#settingsModal`).
+
+User-facing text in chat and panels is rendered as **markdown** (`marked` + DOMPurify, `.markdown-content` in CSS).
+
+---
+
+## 5. API Resilience: Rate Limiting & Retry Logic
 
 Because the Catalyst runs on provider rate limits, it features a custom-built, queue-aware client middleware to avoid API exhaustion and 503 errors.
 
@@ -126,7 +149,7 @@ If the primary model (`GPT OSS 120B` via CLOD) remains overloaded or rate-limite
 
 ---
 
-## 5. Agent Self-Improvement & Documentation Lifecycle
+## 6. Agent Self-Improvement & Documentation Lifecycle
 
 To prevent this architecture document from becoming stale as the product grows, coding agents must follow these rules:
 
@@ -136,6 +159,7 @@ To prevent this architecture document from becoming stale as the product grows, 
   - If you change the priority, keys, or tone triggers of the Catalyst's Mindset Stack.
   - If you configure a different default model or modify the CLOD/Gemini fallback priority.
   - If you modify the database schema affecting SQLite tables (`models.py`) or the LTM synthesis cycle.
+  - When you add or change goals API behavior, streak calculation, or frontend goals/stats/settings panels.
 * **How to Update This File**:
   - Keep the language direct, clear, and focused on technical specifications.
   - Do not add vague feature concepts; always supply the exact parameter name, table column, or limit thresholds.

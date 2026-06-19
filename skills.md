@@ -56,7 +56,7 @@ Before modifying any code, review this map to determine which reference file is 
   - [`backend/functions.py`](backend/functions.py): Tool registry.
   - [`backend/memory_manager.py`](backend/memory_manager.py): LTM queries and missed-session logic.
   - [`backend/rate_limiter.py`](backend/rate_limiter.py): Async quota limiter.
-- [`frontend/`](frontend/): Static chat UI (`index.html`, `app.js`, `style.css`).
+- [`frontend/`](frontend/): Static chat UI (`index.html`, `app.js`, `style.css`). Modals: Goals, Stats, Settings. Markdown via `marked` + DOMPurify.
   - [`frontend/experimental/`](frontend/experimental/): Unintegrated rate-limit UI prototype.
 - [`prompts/system_prompt.md`](prompts/system_prompt.md): Base agent persona (loaded at runtime).
 - [`docs/`](docs/): Technical references (`RESILIENCE.md`, `ROADMAP.md`).
@@ -139,3 +139,9 @@ Whenever you solve a bug, implement a new feature, or receive a stylistic correc
 - **Lesson**: Virtual Environment Isolation.
   - **Why it matters**: Installing packages globally leads to dependency drift.
   - **Where it applies**: All local execution should be run from within `venv`.
+- **Lesson**: Frontend cache busting after modal/JS renames.
+  - **Why it matters**: Browsers cache `app.js`; stale scripts referencing removed element IDs (e.g. `initModal`) break startup and button handlers.
+  - **Where it applies**: Bump `?v=` on `app.js` / `style.css` in `index.html`; hard-refresh during local dev.
+- **Lesson**: User prose uses markdown helpers, not `escapeHtml`.
+  - **Why it matters**: Wins, LTM sections, and chat content are markdown; escaping shows raw `**bold**` syntax.
+  - **Where it applies**: `markdownBlock()` / `markdownToHtml()` in `frontend/app.js`; `.markdown-content` in `style.css`.

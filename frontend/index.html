@@ -4,7 +4,7 @@
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>The Catalyst</title>
-        <link rel="stylesheet" href="./style.css">
+        <link rel="stylesheet" href="./style.css?v=20260619b">
     </head>
     <body>
         <div class="app-frame">
@@ -17,16 +17,22 @@
                             <p class="subtitle">AI mentor for ambitious builders.</p>
                         </div>
                     </div>
-                    <div class="goal-badge">
+                    <button
+                        class="goal-badge"
+                        id="goalBadge"
+                        type="button"
+                        title="Edit goals"
+                        aria-label="Edit goals"
+                    >
                         <span class="goal-badge-icon" aria-hidden="true">🎯</span>
                         <span class="goal-text" id="goalDisplay">Checking for your North Star...</span>
-                    </div>
+                    </button>
                     <div class="header-actions">
-                        <button class="btn-header" type="button">
+                        <button class="btn-header" id="statsButton" type="button" aria-label="View stats">
                             <span aria-hidden="true">📊</span>
                             <span>Stats</span>
                         </button>
-                        <button class="btn-header" type="button">
+                        <button class="btn-header" id="settingsButton" type="button" aria-label="Open settings">
                             <span aria-hidden="true">⚙️</span>
                             <span>Settings</span>
                         </button>
@@ -118,31 +124,105 @@
                 </section>
             </div>
         </div>
-        <dialog class="modal" id="initModal">
-            <form method="dialog" class="modal-card">
-                <h2>Set Your North Star</h2>
-                <label class="field">
-                    <span>Description</span>
-                    <textarea
-                        id="goalDescription"
-                        rows="3"
-                        required
-                        placeholder="What extraordinary outcome do you want?"
-                    ></textarea>
-                </label>
-                <label class="field">
-                    <span>Metric</span>
-                    <input id="goalMetric" type="text" placeholder="How will we measure success?">
-                </label>
-                <label class="field">
-                    <span>Timeline</span>
-                    <input id="goalTimeline" type="text" placeholder="Timeline (e.g., 6 months)">
-                </label>
-                <menu class="modal-actions">
-                    <button value="cancel" class="secondary">Cancel</button>
-                    <button id="initButton" value="default" class="primary">Ignite 🔥</button>
-                </menu>
-            </form>
+        <dialog class="modal" id="goalsModal">
+            <div class="modal-card goals-modal-card">
+                <div id="goalsInitView">
+                    <form method="dialog" class="goals-init-form">
+                        <h2>Set Your North Star</h2>
+                        <label class="field">
+                            <span>Description</span>
+                            <textarea
+                                id="goalDescription"
+                                rows="3"
+                                required
+                                placeholder="What extraordinary outcome do you want?"
+                            ></textarea>
+                        </label>
+                        <label class="field">
+                            <span>Metric</span>
+                            <input id="goalMetric" type="text" placeholder="How will we measure success?">
+                        </label>
+                        <label class="field">
+                            <span>Timeline</span>
+                            <input id="goalTimeline" type="text" placeholder="Timeline (e.g., 6 months)">
+                        </label>
+                        <menu class="modal-actions">
+                            <button value="cancel" class="secondary">Cancel</button>
+                            <button id="initButton" value="default" class="primary" type="button">
+                                Ignite 🔥
+                            </button>
+                        </menu>
+                    </form>
+                </div>
+                <div id="goalsEditView" hidden>
+                    <div class="modal-header compact">
+                        <h2>Your Goals</h2>
+                        <p class="modal-subtitle">
+                            Your North Star drives every Catalyst conversation. Sub-goals support the bigger mission.
+                        </p>
+                    </div>
+                    <div class="goals-list" id="goalsList" role="list"></div>
+                    <section class="goals-add-section">
+                        <h3>Add a sub-goal</h3>
+                        <label class="field">
+                            <span>Description</span>
+                            <textarea
+                                id="newGoalDescription"
+                                rows="2"
+                                placeholder="What supporting outcome matters next?"
+                            ></textarea>
+                        </label>
+                        <div class="goals-add-row">
+                            <label class="field">
+                                <span>Metric</span>
+                                <input id="newGoalMetric" type="text" placeholder="Optional">
+                            </label>
+                            <label class="field">
+                                <span>Timeline</span>
+                                <input id="newGoalTimeline" type="text" placeholder="Optional">
+                            </label>
+                        </div>
+                        <button type="button" class="primary btn-inline" id="addGoalButton">
+                            Add goal
+                        </button>
+                    </section>
+                    <menu class="modal-actions">
+                        <button type="button" class="secondary" id="closeGoalsButton">Close</button>
+                    </menu>
+                </div>
+            </div>
+        </dialog>
+        <dialog class="modal panel-modal" id="statsModal">
+            <div class="modal-card panel-card">
+                <div class="modal-header">
+                    <h2>Momentum Stats</h2>
+                    <p class="modal-subtitle">
+                        Grounded in your rituals, energy, and wins — not vanity metrics.
+                    </p>
+                    <button type="button" class="close-btn" id="closeStatsBtn" aria-label="Close stats">
+                        ✕
+                    </button>
+                </div>
+                <div class="panel-scroll" id="statsContent">
+                    <p class="panel-loading">Loading your momentum...</p>
+                </div>
+            </div>
+        </dialog>
+        <dialog class="modal panel-modal" id="settingsModal">
+            <div class="modal-card panel-card">
+                <div class="modal-header">
+                    <h2>Settings</h2>
+                    <p class="modal-subtitle">
+                        What Catalyst knows about you and how the system is running.
+                    </p>
+                    <button type="button" class="close-btn" id="closeSettingsBtn" aria-label="Close settings">
+                        ✕
+                    </button>
+                </div>
+                <div class="panel-scroll" id="settingsContent">
+                    <p class="panel-loading">Loading settings...</p>
+                </div>
+            </div>
         </dialog>
         <dialog class="modal preview-modal" id="previewModal">
             <div class="modal-card preview-card">
@@ -209,6 +289,6 @@
                 </menu>
             </div>
         </dialog>
-        <script type="module" src="./app.js"></script>
+        <script type="module" src="./app.js?v=20260619b"></script>
     </body>
 </html>

@@ -126,6 +126,13 @@ body::before {
     cursor: pointer;
     transition: all 0.3s ease;
     overflow: hidden;
+    font-family: inherit;
+    text-align: left;
+}
+
+.goal-badge:focus-visible {
+    outline: 2px solid rgba(255, 107, 53, 0.55);
+    outline-offset: 2px;
 }
 
 .goal-badge-icon {
@@ -421,7 +428,16 @@ body::before {
     -webkit-line-clamp: 2;
     line-clamp: 2;
     -webkit-box-orient: vertical;
-    margin-bottom: 0.15rem;
+}
+
+.conversation-snippet.markdown-content p,
+.conversation-snippet.markdown-content ul,
+.conversation-snippet.markdown-content ol {
+    margin: 0;
+}
+
+.conversation-snippet.markdown-content li {
+    margin: 0;
 }
 
 .conversation-meta {
@@ -676,38 +692,49 @@ body::before {
     border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 1.1rem;
     padding: 1.1rem 1.3rem;
+    box-shadow: 0 12px 30px rgba(10, 14, 39, 0.3);
+}
+
+.markdown-content {
     line-height: 1.6;
     font-size: 15px;
-    box-shadow: 0 12px 30px rgba(10, 14, 39, 0.3);
     word-wrap: break-word;
     overflow-wrap: break-word;
     max-width: 100%;
+    color: var(--text-primary);
 }
 
-.message.user .message-body {
-    background: linear-gradient(135deg, rgba(255, 107, 53, 0.2), rgba(245, 158, 11, 0.15));
-    /* color: #0f172a; */
-    border-color: rgba(255, 107, 53, 0.3);
+.markdown-content.compact {
+    font-size: 0.9rem;
+    line-height: 1.45;
 }
 
-.message-body p+p,
-.message-body ul,
-.message-body ol,
-.message-body pre,
-.message-body blockquote {
+.markdown-content > :first-child {
+    margin-top: 0;
+}
+
+.markdown-content > :last-child {
+    margin-bottom: 0;
+}
+
+.markdown-content p+p,
+.markdown-content ul,
+.markdown-content ol,
+.markdown-content pre,
+.markdown-content blockquote {
     margin-top: 0.85rem;
 }
 
-.message-body ul,
-.message-body ol {
+.markdown-content ul,
+.markdown-content ol {
     padding-left: 1.35rem;
 }
 
-.message-body li+li {
+.markdown-content li+li {
     margin-top: 0.35rem;
 }
 
-.message-body code {
+.markdown-content code {
     font-family: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
         "Liberation Mono", "Courier New", monospace;
     background: rgba(9, 13, 31, 0.6);
@@ -716,11 +743,7 @@ body::before {
     font-size: 0.95em;
 }
 
-.message.user .message-body code {
-    background: rgba(15, 23, 42, 0.12);
-}
-
-.message-body pre {
+.markdown-content pre {
     background: rgba(2, 6, 23, 0.7);
     border-radius: 1rem;
     padding: 1rem 1.15rem;
@@ -728,17 +751,48 @@ body::before {
     border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.message-body blockquote {
+.markdown-content pre code {
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+    font-size: 0.9em;
+}
+
+.markdown-content blockquote {
     border-left: 3px solid rgba(148, 163, 184, 0.6);
     padding-left: 0.9rem;
     background: rgba(148, 163, 184, 0.12);
     border-radius: 0.85rem;
 }
 
-.message-body a {
+.markdown-content a {
     color: #38bdf8;
     text-decoration: underline;
     text-decoration-thickness: 0.08em;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4 {
+    line-height: 1.25;
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
+    color: var(--text-primary);
+}
+
+.markdown-content h1 { font-size: 1.35rem; }
+.markdown-content h2 { font-size: 1.2rem; }
+.markdown-content h3 { font-size: 1.05rem; }
+.markdown-content h4 { font-size: 0.95rem; }
+
+.message.user .message-body {
+    background: linear-gradient(135deg, rgba(255, 107, 53, 0.2), rgba(245, 158, 11, 0.15));
+    border-color: rgba(255, 107, 53, 0.3);
+}
+
+.message.user .message-body code {
+    background: rgba(15, 23, 42, 0.12);
 }
 
 .typing-indicator {
@@ -963,6 +1017,23 @@ body::before {
     backdrop-filter: blur(6px);
 }
 
+.modal {
+    border: none;
+    padding: 0;
+    background: transparent;
+    max-width: none;
+    max-height: none;
+}
+
+.modal[open] {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    width: 100vw;
+    height: 100vh;
+}
+
 .debug-modal {
     border: none;
     padding: 0;
@@ -1126,8 +1197,6 @@ body::before {
     padding: 0.75rem 0.9rem;
     overflow-y: auto;
     max-height: 32vh;
-    font-size: 0.88rem;
-    line-height: 1.6;
     scrollbar-width: thin;
     scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
 }
@@ -1146,16 +1215,7 @@ body::before {
 }
 
 .debug-section .debug-markdown pre {
-    background: rgba(8, 11, 29, 0.85);
-    border: 1px solid rgba(148, 163, 184, 0.25);
-    border-radius: 0.65rem;
-    padding: 0.75rem;
     margin: 0 0 0.75rem;
-    overflow-x: auto;
-    font-family: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-        "Liberation Mono", "Courier New", monospace;
-    font-size: 0.82rem;
-    line-height: 1.5;
 }
 
 .debug-section .debug-markdown pre:last-child {
@@ -1173,17 +1233,6 @@ body::before {
 
 .debug-section .debug-markdown pre::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.3);
-}
-
-.debug-section .debug-markdown code {
-    font-family: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-        "Liberation Mono", "Courier New", monospace;
-}
-
-.debug-section .debug-markdown :not(pre)>code {
-    background: rgba(255, 255, 255, 0.08);
-    border-radius: 0.4rem;
-    padding: 0.1rem 0.35rem;
 }
 
 .modal-header {
@@ -1389,5 +1438,472 @@ button:disabled {
     .typing-indicator {
         padding-left: 0;
         justify-content: flex-start;
+    }
+}
+
+/* Goals, Stats, and Settings panels */
+.goals-modal-card {
+    min-width: min(560px, 94vw);
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.goals-init-form {
+    display: grid;
+    gap: 1rem;
+}
+
+.goals-list {
+    display: grid;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+}
+
+.goal-card {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-md);
+    padding: 1rem;
+    background: rgba(30, 35, 65, 0.35);
+    display: grid;
+    gap: 0.75rem;
+}
+
+.goal-card.north-star {
+    border-color: rgba(255, 107, 53, 0.45);
+    background: rgba(255, 107, 53, 0.08);
+}
+
+.goal-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.goal-card-badge {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--accent-primary);
+}
+
+.goal-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.goal-card-actions button {
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-primary);
+    border-radius: 0.6rem;
+    padding: 0.4rem 0.75rem;
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+
+.goal-card-actions button:hover,
+.goal-card-actions button:focus-visible {
+    outline: none;
+    border-color: rgba(255, 255, 255, 0.22);
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.goal-card-actions button.destructive {
+    color: #fecdd3;
+    border-color: rgba(248, 113, 113, 0.35);
+}
+
+.goals-add-section {
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    padding-top: 1rem;
+    display: grid;
+    gap: 0.75rem;
+}
+
+.goals-add-section h3 {
+    font-size: 1rem;
+    color: var(--text-secondary);
+}
+
+.goals-add-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+}
+
+.btn-inline {
+    justify-self: start;
+    border: none;
+    border-radius: 0.75rem;
+    padding: 0.6rem 1rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.panel-modal {
+    border: none;
+    padding: 0;
+    background: transparent;
+    max-width: none;
+    max-height: none;
+}
+
+.panel-modal[open] {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    width: 100vw;
+    height: 100vh;
+}
+
+.panel-card {
+    min-width: min(720px, 94vw);
+    max-width: 820px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
+.panel-card .modal-header {
+    padding: 1.5rem 1.75rem 0.75rem;
+    position: relative;
+}
+
+.modal-header.compact {
+    padding: 0 0 0.5rem;
+}
+
+.panel-scroll {
+    overflow-y: auto;
+    padding: 0 1.75rem 1.75rem;
+    display: grid;
+    gap: 1.25rem;
+}
+
+.panel-loading {
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+.stats-section {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.stats-section h3 {
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+    letter-spacing: 0.02em;
+}
+
+.north-star-card {
+    border: 1px solid rgba(255, 107, 53, 0.35);
+    border-radius: var(--radius-md);
+    padding: 1rem;
+    background: rgba(255, 107, 53, 0.08);
+}
+
+.momentum-headline {
+    display: flex;
+    gap: 1.5rem;
+    align-items: flex-end;
+}
+
+.momentum-stat {
+    display: grid;
+    gap: 0.2rem;
+}
+
+.momentum-stat .value {
+    font-size: 2.25rem;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--accent-primary);
+}
+
+.momentum-stat .label {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.ritual-calendar {
+    display: grid;
+    grid-template-columns: repeat(15, 1fr);
+    gap: 0.35rem;
+}
+
+.ritual-day {
+    aspect-ratio: 1;
+    border-radius: 0.35rem;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.ritual-day.complete {
+    background: rgba(34, 197, 94, 0.35);
+    border-color: rgba(34, 197, 94, 0.45);
+}
+
+.ritual-day.partial {
+    background: rgba(245, 158, 11, 0.35);
+    border-color: rgba(245, 158, 11, 0.45);
+}
+
+.ritual-calendar-legend {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.ritual-calendar-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.legend-dot {
+    width: 0.65rem;
+    height: 0.65rem;
+    border-radius: 0.2rem;
+    display: inline-block;
+}
+
+.legend-dot.complete {
+    background: rgba(34, 197, 94, 0.55);
+}
+
+.legend-dot.partial {
+    background: rgba(245, 158, 11, 0.55);
+}
+
+.legend-dot.none {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.sparkline-row {
+    display: grid;
+    gap: 0.5rem;
+}
+
+.sparkline-label {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.sparkline-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.25rem;
+    height: 3rem;
+}
+
+.sparkline-bar {
+    flex: 1;
+    min-width: 0;
+    border-radius: 0.25rem 0.25rem 0 0;
+    background: linear-gradient(180deg, var(--accent-primary), rgba(255, 107, 53, 0.35));
+    opacity: 0.85;
+}
+
+.highlight-list {
+    list-style: none;
+    display: grid;
+    gap: 0.6rem;
+    margin: 0;
+    padding: 0;
+}
+
+.highlight-list li {
+    border-left: 3px solid rgba(255, 107, 53, 0.5);
+    padding-left: 0.75rem;
+    display: grid;
+    gap: 0.35rem;
+}
+
+.highlight-date {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.goal-meta {
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.insight-list {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.insight-card {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-md);
+    padding: 0.85rem 1rem;
+    background: rgba(30, 35, 65, 0.35);
+    display: grid;
+    gap: 0.5rem;
+}
+
+.insight-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.insight-type {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--accent-secondary);
+}
+
+.insight-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.insight-chip {
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    padding: 0.45rem 0.75rem;
+    font-size: 0.8rem;
+    background: rgba(30, 35, 65, 0.45);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    max-width: 100%;
+}
+
+.insight-chip .type {
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 0.65rem;
+    color: var(--accent-secondary);
+}
+
+.importance-dots {
+    display: inline-flex;
+    gap: 0.15rem;
+}
+
+.importance-dots span {
+    width: 0.35rem;
+    height: 0.35rem;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.importance-dots span.active {
+    background: var(--accent-primary);
+}
+
+.empty-state {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    font-style: italic;
+}
+
+.settings-section {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-md);
+    padding: 1rem;
+    display: grid;
+    gap: 0.75rem;
+    background: rgba(30, 35, 65, 0.25);
+}
+
+.settings-section h3 {
+    font-size: 1rem;
+}
+
+.settings-section p {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    line-height: 1.45;
+}
+
+.ltm-section details {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.65rem;
+    padding: 0.65rem 0.85rem;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.ltm-section summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.ltm-section .ltm-body {
+    margin-top: 0.65rem;
+}
+
+.ltm-section .ltm-body .markdown-content.ltm {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0.65rem;
+    padding: 0.75rem 0.9rem;
+}
+
+.rate-limit-meter {
+    display: grid;
+    gap: 0.35rem;
+}
+
+.rate-limit-meter-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.rate-limit-meter-track {
+    height: 0.5rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+}
+
+.rate-limit-meter-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+    transition: width 0.3s ease;
+}
+
+.rate-limit-meter-fill.warning {
+    background: linear-gradient(90deg, #f59e0b, #ef4444);
+}
+
+@media (max-width: 768px) {
+    .goals-add-row {
+        grid-template-columns: 1fr;
+    }
+
+    .ritual-calendar {
+        grid-template-columns: repeat(10, 1fr);
+    }
+
+    .momentum-headline {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.75rem;
     }
 }

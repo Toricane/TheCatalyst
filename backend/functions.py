@@ -251,6 +251,10 @@ def update_session_tracking(session_type: str) -> Dict[str, Any]:
 
         tracking.total_sessions = (tracking.total_sessions or 0) + 1
 
+        from .memory_manager import compute_streak
+
+        tracking.streak_count = compute_streak(session)
+
     return {
         "status": "success",
         "session_type": session_type,

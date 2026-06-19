@@ -8,7 +8,7 @@ from math import ceil
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models
@@ -50,6 +50,15 @@ def _persisted_debug_fields(response: Dict[str, Any]) -> Dict[str, Any]:
 async def initialize_catalyst(
     goal: Goal, db: Session = Depends(get_db)
 ) -> ChatResponse:
+    existing_goals = (
+        db.query(models.Goal).filter(models.Goal.is_active.is_(True)).count()
+    )
+    if existing_goals > 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Catalyst is already initialized. Use POST /goals to add goals.",
+        )
+
     goal_row = models.Goal(
         description=goal.description,
         metric=goal.metric,

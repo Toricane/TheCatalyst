@@ -157,6 +157,20 @@ def get_ltm_profile_by_version(
     return serialize_ltm_profile(None)
 
 
+def serialize_goal_row(goal: Goal) -> Dict[str, Any]:
+    """Serialize a single goal row for API responses."""
+    return {
+        "id": goal.id,
+        "description": goal.description,
+        "metric": goal.metric,
+        "timeline": goal.timeline,
+        "rank": goal.rank,
+        "created_at": (
+            to_local(goal.created_at).isoformat() if goal.created_at else None
+        ),
+    }
+
+
 def get_goals_hierarchy(session: Session) -> List[Dict[str, Any]]:
     """Return all active goals ordered by rank and recency."""
     goals = (
@@ -165,19 +179,64 @@ def get_goals_hierarchy(session: Session) -> List[Dict[str, Any]]:
         .order_by(Goal.rank.asc(), Goal.created_at.desc())
         .all()
     )
-    return [
-        {
-            "id": goal.id,
-            "description": goal.description,
-            "metric": goal.metric,
-            "timeline": goal.timeline,
-            "rank": goal.rank,
-            "created_at": (
-                to_local(goal.created_at).isoformat() if goal.created_at else None
-            ),
-        }
-        for goal in goals
-    ]
+    return [serialize_goal_row(goal) for goal in goals]
+
+
+def sync_ltm_north_star(
+    session: Session,
+    description: str,
+    metric: Optional[str] = None,
+    timeline: Optional[str] = None,
+) -> None:
+    """Update the Overview & North Star section in the latest LTM profile."""
+    profile = (
+        session.query(LTMProfile).order_by(desc(LTMProfile.id)).first()
+    )
+    if not profile or not profile.summary_text:
+        return
+
+    section_body = (
+        f"- Primary Goal: {description}\n"
+        f"- Success Metric: {metric or 'Not specified'}\n"
+        f"- Timeline: {timeline or 'Not specified'}\n"
+    )
+    heading = "## Overview & North Star"
+    text = profile.summary_text
+    pattern = re.compile(
+        rf"({re.escape(heading)}\s*\n)(.*?)(\n## |\Z)",
+        re.DOTALL,
+    )
+    if pattern.search(text):
+        profile.summary_text = pattern.sub(
+            rf"\1{section_body}\3",
+            text,
+            count=1,
+        )
+    else:
+        profile.summary_text = f"{heading}\n{section_body}\n\n{text}"
+
+
+def _day_has_ritual_activity(log: Optional[DailyLog]) -> bool:
+    if not log:
+        return False
+    return bool(log.morning_completed or log.evening_completed)
+
+
+def compute_streak(session: Session) -> int:
+    """Count consecutive calendar days with at least one ritual completed."""
+    today = local_now().date()
+    logs = session.query(DailyLog).filter(DailyLog.date <= today).all()
+    by_date = {log.date: log for log in logs}
+
+    check_date = today
+    if not _day_has_ritual_activity(by_date.get(check_date)):
+        check_date = today - timedelta(days=1)
+
+    streak = 0
+    while _day_has_ritual_activity(by_date.get(check_date)):
+        streak += 1
+        check_date -= timedelta(days=1)
+    return streak
 
 
 MORNING_WINDOW_START_HOUR = 4

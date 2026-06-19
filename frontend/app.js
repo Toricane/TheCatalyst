@@ -9,6 +9,67 @@ function renderMarkdown(text = "") {
     return DOMPurify.sanitize(parsed);
 }
 
+const markdownPlainTextEl = document.createElement("div");
+
+function markdownToHtml(text = "") {
+    return renderMarkdown(String(text ?? ""));
+}
+
+function plainTextFromMarkdown(text = "") {
+    const source = String(text ?? "").trim();
+    if (!source) return "";
+    markdownPlainTextEl.innerHTML = markdownToHtml(source);
+    return (markdownPlainTextEl.textContent || "").replace(/\s+/g, " ").trim();
+}
+
+function markdownBlock(text = "", extraClass = "") {
+    const source = String(text ?? "").trim();
+    if (!source) return "";
+    const classes = ["markdown-content", extraClass].filter(Boolean).join(" ");
+    return `<div class="${classes}">${markdownToHtml(source)}</div>`;
+}
+
+function formatGoalSummary(goal) {
+    if (!goal) return "";
+    const parts = [
+        plainTextFromMarkdown(goal.description),
+        plainTextFromMarkdown(goal.metric) || "No metric",
+        plainTextFromMarkdown(goal.timeline) || "No timeline",
+    ];
+    return parts.filter(Boolean).join(" • ");
+}
+
+function buildNorthStarCard(goal, emptyMessage) {
+    if (!goal) {
+        return `<p class="empty-state">${escapeHtml(emptyMessage)}</p>`;
+    }
+    const meta = `${escapeHtml(goal.metric || "No metric")} • ${escapeHtml(goal.timeline || "No timeline")}`;
+    return `
+        <div class="north-star-card">
+            ${markdownBlock(goal.description, "compact")}
+            <p class="goal-meta">${meta}</p>
+        </div>
+    `;
+}
+
+function buildInsightsList(insights, emptyMessage) {
+    if (!insights?.length) {
+        return `<p class="empty-state">${escapeHtml(emptyMessage)}</p>`;
+    }
+    return `<div class="insight-list">${insights
+        .map(
+            (insight) => `
+        <article class="insight-card">
+            <div class="insight-card-header">
+                <span class="insight-type">${escapeHtml(insight.insight_type || "insight")}</span>
+                ${buildImportanceDots(insight.importance_score)}
+            </div>
+            ${markdownBlock(insight.description, "compact")}
+        </article>`
+        )
+        .join("")}</div>`;
+}
+
 const TOON_HEADER_PATTERN = /^\w[\w.]*\[\d+\]\{[^}]+\}:$/;
 const TOON_KV_PATTERN = /^(session|date|missed):/;
 
@@ -154,6 +215,7 @@ const timestampFormatter = new Intl.DateTimeFormat(undefined, {
 const chatFeed = document.getElementById("chatFeed");
 const typingIndicator = document.getElementById("typingIndicator");
 const goalDisplay = document.getElementById("goalDisplay");
+const goalBadge = document.getElementById("goalBadge");
 const conversationList = document.getElementById("conversationList");
 const conversationEmpty = document.getElementById("conversationEmpty");
 const conversationSummary = document.getElementById("conversationSummary");
@@ -180,8 +242,26 @@ const editButton = document.getElementById("editButton");
 const sendFromPreviewButton = document.getElementById("sendFromPreviewButton");
 const sessionButtons = Array.from(document.querySelectorAll(".session-btn"));
 const shareButton = document.getElementById("shareConversationButton");
-const initModal = document.getElementById("initModal");
+const goalsModal =
+    document.getElementById("goalsModal") ||
+    document.getElementById("initModal");
+const goalsInitView = document.getElementById("goalsInitView");
+const goalsEditView = document.getElementById("goalsEditView");
+const goalsList = document.getElementById("goalsList");
 const initButton = document.getElementById("initButton");
+const closeGoalsButton = document.getElementById("closeGoalsButton");
+const addGoalButton = document.getElementById("addGoalButton");
+const newGoalDescription = document.getElementById("newGoalDescription");
+const newGoalMetric = document.getElementById("newGoalMetric");
+const newGoalTimeline = document.getElementById("newGoalTimeline");
+const statsButton = document.getElementById("statsButton");
+const settingsButton = document.getElementById("settingsButton");
+const statsModal = document.getElementById("statsModal");
+const statsContent = document.getElementById("statsContent");
+const closeStatsBtn = document.getElementById("closeStatsBtn");
+const settingsModal = document.getElementById("settingsModal");
+const settingsContent = document.getElementById("settingsContent");
+const closeSettingsBtn = document.getElementById("closeSettingsBtn");
 const goalDescription = document.getElementById("goalDescription");
 const goalMetric = document.getElementById("goalMetric");
 const goalTimeline = document.getElementById("goalTimeline");
@@ -201,6 +281,485 @@ let messageContextTargetElement = null;
 const messageDebugData = new WeakMap();
 let currentDebugClipboardText = "";
 let isExportingConversation = false;
+let cachedGoalsData = null;
+
+function escapeHtml(value = "") {
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+}
+
+function showGoalsInitView() {
+    if (goalsInitView) goalsInitView.hidden = false;
+    if (goalsEditView) goalsEditView.hidden = true;
+}
+
+function showGoalsEditView() {
+    if (goalsInitView) goalsInitView.hidden = true;
+    if (goalsEditView) goalsEditView.hidden = false;
+}
+
+function openGoalsModal(mode = "auto") {
+    if (!goalsModal) return;
+
+    const hasGoals = Boolean(cachedGoalsData?.total);
+    if (mode === "init" || (!hasGoals && mode === "auto")) {
+        showGoalsInitView();
+    } else {
+        showGoalsEditView();
+        renderGoalsList().catch((error) => {
+            window.alert(`Could not load goals: ${error.message}`);
+        });
+    }
+    if (!goalsModal.open) {
+        goalsModal.showModal();
+    }
+}
+
+async function loadGoalsData() {
+    const data = await fetchJSON(`${API_BASE_URL}/goals`);
+    cachedGoalsData = data;
+    return data;
+}
+
+function buildGoalCard(goal) {
+    const card = document.createElement("article");
+    card.className = `goal-card${goal.rank === 1 ? " north-star" : ""}`;
+    card.dataset.goalId = String(goal.id);
+    card.setAttribute("role", "listitem");
+
+    const header = document.createElement("div");
+    header.className = "goal-card-header";
+    header.innerHTML = goal.rank === 1
+        ? '<span class="goal-card-badge">North Star</span>'
+        : `<span class="goal-card-badge">Rank ${goal.rank}</span>`;
+
+    const descriptionField = document.createElement("label");
+    descriptionField.className = "field";
+    descriptionField.innerHTML = "<span>Description</span>";
+    const descriptionInput = document.createElement("textarea");
+    descriptionInput.rows = 2;
+    descriptionInput.value = goal.description || "";
+    descriptionField.appendChild(descriptionInput);
+
+    const metaRow = document.createElement("div");
+    metaRow.className = "goals-add-row";
+
+    const metricField = document.createElement("label");
+    metricField.className = "field";
+    metricField.innerHTML = "<span>Metric</span>";
+    const metricInput = document.createElement("input");
+    metricInput.type = "text";
+    metricInput.value = goal.metric || "";
+    metricField.appendChild(metricInput);
+
+    const timelineField = document.createElement("label");
+    timelineField.className = "field";
+    timelineField.innerHTML = "<span>Timeline</span>";
+    const timelineInput = document.createElement("input");
+    timelineInput.type = "text";
+    timelineInput.value = goal.timeline || "";
+    timelineField.appendChild(timelineInput);
+
+    metaRow.append(metricField, timelineField);
+
+    const actions = document.createElement("div");
+    actions.className = "goal-card-actions";
+
+    const saveButton = document.createElement("button");
+    saveButton.type = "button";
+    saveButton.textContent = "Save";
+    saveButton.addEventListener("click", () => {
+        saveGoalCard(goal.id, {
+            description: descriptionInput.value,
+            metric: metricInput.value,
+            timeline: timelineInput.value,
+        }).catch((error) => {
+            window.alert(`Could not save goal: ${error.message}`);
+        });
+    });
+
+    actions.appendChild(saveButton);
+
+    if (goal.rank !== 1) {
+        const promoteButton = document.createElement("button");
+        promoteButton.type = "button";
+        promoteButton.textContent = "Set as North Star";
+        promoteButton.addEventListener("click", () => {
+            updateGoal(goal.id, { rank: 1 }).catch((error) => {
+                window.alert(`Could not promote goal: ${error.message}`);
+            });
+        });
+        actions.appendChild(promoteButton);
+
+        const deactivateButton = document.createElement("button");
+        deactivateButton.type = "button";
+        deactivateButton.className = "destructive";
+        deactivateButton.textContent = "Deactivate";
+        deactivateButton.addEventListener("click", () => {
+            if (!window.confirm("Deactivate this sub-goal?")) return;
+            updateGoal(goal.id, { is_active: false }).catch((error) => {
+                window.alert(`Could not deactivate goal: ${error.message}`);
+            });
+        });
+        actions.appendChild(deactivateButton);
+    }
+
+    card.append(header, descriptionField, metaRow, actions);
+    return card;
+}
+
+async function renderGoalsList() {
+    if (!goalsList) return;
+    const data = await loadGoalsData();
+    goalsList.innerHTML = "";
+    if (!data.goals?.length) {
+        goalsList.innerHTML =
+            '<p class="empty-state">No active goals yet. Set your North Star to begin.</p>';
+        return;
+    }
+    data.goals.forEach((goal) => {
+        goalsList.appendChild(buildGoalCard(goal));
+    });
+}
+
+async function updateGoal(goalId, payload) {
+    await fetchJSON(`${API_BASE_URL}/goals/${goalId}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+    });
+    await refreshGoalDisplay();
+    if (goalsModal?.open && goalsEditView && !goalsEditView.hidden) {
+        await renderGoalsList();
+    }
+}
+
+async function saveGoalCard(goalId, fields) {
+    const description = fields.description.trim();
+    if (!description) {
+        window.alert("Description is required.");
+        return;
+    }
+    await updateGoal(goalId, {
+        description,
+        metric: fields.metric.trim() || null,
+        timeline: fields.timeline.trim() || null,
+    });
+}
+
+async function addSubGoal() {
+    const description = newGoalDescription?.value.trim();
+    if (!description) {
+        newGoalDescription?.focus();
+        return;
+    }
+    await fetchJSON(`${API_BASE_URL}/goals`, {
+        method: "POST",
+        body: JSON.stringify({
+            description,
+            metric: newGoalMetric?.value.trim() || null,
+            timeline: newGoalTimeline?.value.trim() || null,
+        }),
+    });
+    if (newGoalDescription) newGoalDescription.value = "";
+    if (newGoalMetric) newGoalMetric.value = "";
+    if (newGoalTimeline) newGoalTimeline.value = "";
+    await refreshGoalDisplay();
+    await renderGoalsList();
+}
+
+function buildImportanceDots(score = 0) {
+    const normalized = Math.max(0, Math.min(5, Number(score) || 0));
+    const dots = Array.from({ length: 5 }, (_, index) => {
+        const active = index < normalized ? " active" : "";
+        return `<span class="${active.trim()}"></span>`;
+    }).join("");
+    return `<span class="importance-dots" aria-hidden="true">${dots}</span>`;
+}
+
+function buildSparkline(values, maxValue = 10) {
+    if (!values.length) {
+        return '<p class="empty-state">No energy or focus ratings logged yet.</p>';
+    }
+    const bars = values
+        .map((value) => {
+            const height = Math.max(8, Math.round((value / maxValue) * 100));
+            return `<div class="sparkline-bar" style="height:${height}%" title="${value}/10"></div>`;
+        })
+        .join("");
+    return `<div class="sparkline-bars">${bars}</div>`;
+}
+
+function buildRitualCalendar(logs, days = 30) {
+    const byDate = new Map(logs.map((log) => [log.date, log]));
+    const today = new Date();
+    const cells = [];
+
+    for (let offset = days - 1; offset >= 0; offset -= 1) {
+        const date = new Date(today);
+        date.setDate(today.getDate() - offset);
+        const key = date.toISOString().slice(0, 10);
+        const log = byDate.get(key);
+        let status = "none";
+        if (log?.morning_completed && log?.evening_completed) {
+            status = "complete";
+        } else if (log?.morning_completed || log?.evening_completed) {
+            status = "partial";
+        }
+        const title = `${key}: ${status === "complete" ? "Both rituals" : status === "partial" ? "One ritual" : "No rituals"}`;
+        cells.push(`<div class="ritual-day ${status}" title="${escapeHtml(title)}"></div>`);
+    }
+
+    return `
+        <div class="ritual-calendar" aria-label="Last ${days} days of ritual completion">
+            ${cells.join("")}
+        </div>
+        <div class="ritual-calendar-legend">
+            <span><span class="legend-dot complete"></span> Both rituals</span>
+            <span><span class="legend-dot partial"></span> One ritual</span>
+            <span><span class="legend-dot none"></span> None</span>
+        </div>
+    `;
+}
+
+function collectRecentTextEntries(logs, field, limit = 3) {
+    const entries = [];
+    for (const log of logs) {
+        const value = log?.[field];
+        if (!value || !String(value).trim()) continue;
+        entries.push({
+            date: log.date,
+            text: String(value).trim(),
+        });
+        if (entries.length >= limit) break;
+    }
+    return entries;
+}
+
+function renderHighlightList(entries, emptyMessage) {
+    if (!entries.length) {
+        return `<p class="empty-state">${escapeHtml(emptyMessage)}</p>`;
+    }
+    const items = entries
+        .map(
+            (entry) => `
+        <li>
+            <div class="highlight-date">${escapeHtml(entry.date)}</div>
+            ${markdownBlock(entry.text, "compact")}
+        </li>`
+        )
+        .join("");
+    return `<ul class="highlight-list">${items}</ul>`;
+}
+
+async function openStatsModal() {
+    if (!statsModal || !statsContent) return;
+    statsContent.innerHTML = '<p class="panel-loading">Loading your momentum...</p>';
+    statsModal.showModal();
+
+    try {
+        const [stats, logs, insights, goals] = await Promise.all([
+            fetchJSON(`${API_BASE_URL}/stats`),
+            fetchJSON(`${API_BASE_URL}/logs/recent?days=30`),
+            fetchJSON(`${API_BASE_URL}/insights?limit=8`),
+            loadGoalsData(),
+        ]);
+
+        const northStar = goals.north_star;
+        const recentLogs = Array.isArray(logs) ? logs.slice().reverse() : [];
+        const sparkSource = recentLogs.slice(-14);
+        const energyValues = sparkSource
+            .map((log) => log.energy_level)
+            .filter((value) => value != null);
+        const focusValues = sparkSource
+            .map((log) => log.focus_rating)
+            .filter((value) => value != null);
+
+        const wins = collectRecentTextEntries(logs, "wins");
+        const gratitude = collectRecentTextEntries(logs, "gratitude");
+
+        const insightMarkup = buildInsightsList(
+            insights,
+            "Insights appear as Catalyst notices patterns in your conversations."
+        );
+
+        const hasTracking =
+            stats.total_sessions > 0 ||
+            stats.streak > 0 ||
+            (Array.isArray(logs) && logs.length > 0);
+
+        statsContent.innerHTML = `
+            <section class="stats-section">
+                <h3>North Star</h3>
+                ${buildNorthStarCard(
+                    northStar,
+                    "Set your North Star to anchor your momentum."
+                )}
+            </section>
+            <section class="stats-section">
+                <h3>Momentum</h3>
+                ${
+                    hasTracking
+                        ? `<div class="momentum-headline">
+                            <div class="momentum-stat">
+                                <span class="value">${stats.streak}</span>
+                                <span class="label">Day streak</span>
+                            </div>
+                            <div class="momentum-stat">
+                                <span class="value">${stats.total_sessions}</span>
+                                <span class="label">Ritual sessions</span>
+                            </div>
+                            <div class="momentum-stat">
+                                <span class="value">${Math.round(stats.completion_rate?.morning || 0)}%</span>
+                                <span class="label">Morning (30d)</span>
+                            </div>
+                            <div class="momentum-stat">
+                                <span class="value">${Math.round(stats.completion_rate?.evening || 0)}%</span>
+                                <span class="label">Evening (30d)</span>
+                            </div>
+                           </div>`
+                        : '<p class="empty-state">Complete a morning or evening ritual to start tracking momentum.</p>'
+                }
+            </section>
+            <section class="stats-section">
+                <h3>Ritual consistency (30 days)</h3>
+                ${buildRitualCalendar(Array.isArray(logs) ? logs : [])}
+            </section>
+            <section class="stats-section">
+                <h3>Energy &amp; focus (last 14 logged days)</h3>
+                <div class="sparkline-row">
+                    <span class="sparkline-label">Energy</span>
+                    ${buildSparkline(energyValues)}
+                </div>
+                <div class="sparkline-row">
+                    <span class="sparkline-label">Focus</span>
+                    ${buildSparkline(focusValues)}
+                </div>
+                ${
+                    energyValues.length || focusValues.length
+                        ? `<p class="empty-state" style="font-style:normal;">30-day averages: energy ${stats.average_energy.toFixed(1)}/10, focus ${stats.average_focus.toFixed(1)}/10</p>`
+                        : ""
+                }
+            </section>
+            <section class="stats-section">
+                <h3>Recent wins</h3>
+                ${renderHighlightList(wins, "Wins show up after evening reflections and daily logs.")}
+            </section>
+            <section class="stats-section">
+                <h3>Gratitude highlights</h3>
+                ${renderHighlightList(gratitude, "Gratitude entries appear when you log them with Catalyst.")}
+            </section>
+            <section class="stats-section">
+                <h3>Key insights</h3>
+                ${insightMarkup}
+            </section>
+        `;
+    } catch (error) {
+        statsContent.innerHTML = `<p class="empty-state">Could not load stats: ${escapeHtml(error.message)}</p>`;
+    }
+}
+
+function buildRateLimitMeter(label, remaining, total) {
+    const safeTotal = total > 0 ? total : 1;
+    const used = Math.max(0, safeTotal - (remaining ?? 0));
+    const percent = Math.min(100, Math.round((used / safeTotal) * 100));
+    const warning = percent >= 80 ? " warning" : "";
+    return `
+        <div class="rate-limit-meter">
+            <div class="rate-limit-meter-label">
+                <span>${escapeHtml(label)}</span>
+                <span>${remaining ?? 0} / ${total} remaining</span>
+            </div>
+            <div class="rate-limit-meter-track">
+                <div class="rate-limit-meter-fill${warning}" style="width:${percent}%"></div>
+            </div>
+        </div>
+    `;
+}
+
+function renderLtmSection(title, body) {
+    const content = body?.trim()
+        ? markdownBlock(body, "ltm compact")
+        : '<p class="empty-state">No content yet — Catalyst builds this through your conversations.</p>';
+    return `
+        <details class="ltm-section">
+            <summary>${escapeHtml(title)}</summary>
+            <div class="ltm-body">${content}</div>
+        </details>
+    `;
+}
+
+async function openSettingsModal() {
+    if (!settingsModal || !settingsContent) return;
+    settingsContent.innerHTML = '<p class="panel-loading">Loading settings...</p>';
+    settingsModal.showModal();
+
+    try {
+        const [profile, health, rateLimits, goals] = await Promise.all([
+            fetchJSON(`${API_BASE_URL}/memory/profile`),
+            fetchJSON(`${API_BASE_URL}/health`),
+            fetchJSON(`${API_BASE_URL}/rate-limit-status`),
+            loadGoalsData(),
+        ]);
+
+        const northStar = goals.north_star;
+        const meta = profile._meta || {};
+        const modelName = health.ai_model || "Unknown model";
+
+        const rateLimitMarkup = Object.entries(rateLimits?.models || {})
+            .map(([model, status]) => {
+                const dailyRemaining = status.daily_requests_remaining;
+                const dailyLimit = status.limits?.rpd;
+                if (dailyLimit == null || dailyRemaining == null) {
+                    return `<p class="empty-state">${escapeHtml(model)}: daily quota not tracked client-side.</p>`;
+                }
+                return buildRateLimitMeter(
+                    `${model} daily requests`,
+                    dailyRemaining,
+                    dailyLimit
+                );
+            })
+            .join("");
+
+        settingsContent.innerHTML = `
+            <section class="settings-section">
+                <h3>Goals</h3>
+                ${
+                    northStar
+                        ? `${markdownBlock(northStar.description, "compact")}
+                           <p class="goal-meta">${escapeHtml(northStar.metric || "No metric")} • ${escapeHtml(northStar.timeline || "No timeline")}</p>`
+                        : "<p class=\"empty-state\">No North Star set yet.</p>"
+                }
+                <button type="button" class="primary btn-inline" id="settingsEditGoalsButton">Edit goals</button>
+            </section>
+            <section class="settings-section ltm-section">
+                <h3>Mentor Memory</h3>
+                <p>Updated by Catalyst during evening reflections.</p>
+                <p>Version ${escapeHtml(String(meta.version ?? "—"))} • Last updated ${escapeHtml(meta.updated_at ? formatTimestamp(meta.updated_at) : "—")}</p>
+                ${renderLtmSection("Personality", profile.personality)}
+                ${renderLtmSection("Patterns", profile.patterns)}
+                ${renderLtmSection("Challenges", profile.challenges)}
+                ${renderLtmSection("Breakthroughs", profile.breakthroughs)}
+                ${renderLtmSection("Current State", profile.current_state)}
+            </section>
+            <section class="settings-section">
+                <h3>API &amp; Usage</h3>
+                <p>Primary model: <strong>${escapeHtml(modelName)}</strong></p>
+                ${rateLimitMarkup || '<p class="empty-state">Rate limit status unavailable.</p>'}
+            </section>
+        `;
+
+        const editGoalsButton = document.getElementById("settingsEditGoalsButton");
+        editGoalsButton?.addEventListener("click", () => {
+            settingsModal.close();
+            openGoalsModal("edit");
+        });
+    } catch (error) {
+        settingsContent.innerHTML = `<p class="empty-state">Could not load settings: ${escapeHtml(error.message)}</p>`;
+    }
+}
 
 if (copySystemContextBtn) {
     copySystemContextBtn.disabled = true;
@@ -687,8 +1246,8 @@ function appendMessage(role, text, options = {}) {
     }
 
     const body = document.createElement("div");
-    body.className = "message-body";
-    body.innerHTML = renderMarkdown(text);
+    body.className = "message-body markdown-content";
+    body.innerHTML = markdownToHtml(text);
 
     content.appendChild(body);
     article.appendChild(avatar);
@@ -894,17 +1453,16 @@ async function shareActiveConversation() {
 
 async function refreshGoalDisplay() {
     try {
-        const data = await fetchJSON(`${API_BASE_URL}/goals`);
+        const data = await loadGoalsData();
         if (data.total > 0 && data.north_star) {
-            const { description, metric, timeline } = data.north_star;
-            goalDisplay.textContent = `${description} • ${
-                metric || "No metric"
-            } • ${timeline || "No timeline"}`;
-            if (initModal.open) initModal.close();
+            goalDisplay.textContent = formatGoalSummary(data.north_star);
+            if (goalsModal?.open && goalsInitView && !goalsInitView.hidden) {
+                goalsModal.close();
+            }
             return true;
         }
         goalDisplay.textContent = "No North Star set yet.";
-        if (!initModal.open) initModal.showModal();
+        openGoalsModal("init");
         return false;
     } catch (error) {
         goalDisplay.textContent = `Could not load goal (${error.message})`;
@@ -941,8 +1499,9 @@ function renderConversationList() {
         title.textContent = formatConversationTitle(meta);
 
         const snippet = document.createElement("div");
-        snippet.className = "conversation-snippet";
-        snippet.textContent = meta.preview || "No summary yet.";
+        snippet.className = "conversation-snippet markdown-content compact";
+        const previewText = meta.preview || "No summary yet.";
+        snippet.innerHTML = markdownToHtml(previewText);
 
         item.append(title, snippet);
 
@@ -1173,7 +1732,7 @@ async function initializeCatalyst() {
             debugInfo,
         });
         latestConversationDraft = "";
-        initModal.close();
+        goalsModal?.close();
         await refreshGoalDisplay();
         if (data.conversation_id) {
             conversationCache.delete(data.conversation_id);
@@ -1236,10 +1795,12 @@ function updateInlinePreview() {
 
     const text = messageInput.value.trim();
     if (text) {
-        inputPreviewPanel.innerHTML = renderMarkdown(text);
+        inputPreviewPanel.classList.add("markdown-content", "compact");
+        inputPreviewPanel.innerHTML = markdownToHtml(text);
     } else {
+        inputPreviewPanel.classList.remove("markdown-content", "compact");
         inputPreviewPanel.innerHTML =
-            '<em style="color: var(--text-muted);">Preview will appear here...</em>';
+            '<p class="empty-state">Preview will appear here...</p>';
     }
 }
 
@@ -1248,10 +1809,12 @@ function showPreview() {
     if (previewModal && previewContent) {
         const text = messageInput.value.trim();
         if (!text) {
+            previewContent.classList.remove("markdown-content", "compact");
             previewContent.innerHTML =
-                '<em style="color: #64748b;">Nothing to preview...</em>';
+                '<p class="empty-state">Nothing to preview...</p>';
         } else {
-            previewContent.innerHTML = renderMarkdown(text);
+            previewContent.classList.add("markdown-content", "compact");
+            previewContent.innerHTML = markdownToHtml(text);
         }
         previewModal.showModal();
     }
@@ -1467,8 +2030,8 @@ async function openSystemContextModal(debugInfo) {
         wrapper.appendChild(heading);
 
         const body = document.createElement("div");
-        body.className = "debug-markdown";
-        body.innerHTML = renderMarkdown(formatDebugContent(text, options));
+        body.className = "debug-markdown markdown-content compact";
+        body.innerHTML = markdownToHtml(formatDebugContent(text, options));
         wrapper.appendChild(body);
 
         return wrapper;
@@ -1592,10 +2155,34 @@ function bindEvents() {
         button.addEventListener("click", handleSessionClick)
     );
 
-    initButton.addEventListener("click", (event) => {
+    initButton?.addEventListener("click", (event) => {
         event.preventDefault();
         initializeCatalyst();
     });
+
+    if (goalBadge) {
+        goalBadge.addEventListener("click", () => {
+            openGoalsModal(cachedGoalsData?.total ? "edit" : "init");
+        });
+    }
+
+    closeGoalsButton?.addEventListener("click", () => goalsModal?.close());
+    addGoalButton?.addEventListener("click", () => {
+        addSubGoal().catch((error) => {
+            window.alert(`Could not add goal: ${error.message}`);
+        });
+    });
+
+    statsButton?.addEventListener("click", () => {
+        openStatsModal();
+    });
+
+    settingsButton?.addEventListener("click", () => {
+        openSettingsModal();
+    });
+
+    closeStatsBtn?.addEventListener("click", () => statsModal?.close());
+    closeSettingsBtn?.addEventListener("click", () => settingsModal?.close());
 
     if (conversationList) {
         conversationList.addEventListener("click", (event) => {

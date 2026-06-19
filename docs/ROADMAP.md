@@ -5,14 +5,15 @@ Delivered capabilities are documented in [AGENTS.md](../AGENTS.md) and [README.m
 ## Phase A — Frontend UX
 
 - [ ] Integrate rate-limit status UI into the main chat view (prototype in `frontend/experimental/`)
-- [ ] Floating API quota dashboard (poll `/rate-limit-status`)
+- [x] API quota meters in Settings modal (polls `/rate-limit-status`)
+- [ ] Floating API quota dashboard in chat (persistent widget)
 
 ## Phase B — Features
 
 - [ ] Voice interaction (WebRTC)
-- [ ] Multi-goal hierarchies and sub-tasks
+- [x] Multi-goal hierarchies (basic: North Star + sub-goals via Goals modal; no drag-reorder or sub-tasks)
 - [ ] Productivity integrations (calendar, task apps)
-- [ ] Analytics dashboard (streaks, energy/focus trends)
+- [x] Analytics dashboard (Stats modal: streaks, ritual calendar, energy/focus, wins, gratitude, insights)
 
 ## Phase C — Platform
 
