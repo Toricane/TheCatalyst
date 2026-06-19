@@ -175,7 +175,7 @@ def test_chat_does_not_duplicate_initial_greeting(monkeypatch):
         }
 
     monkeypatch.setattr(
-        "backend.app.generate_catalyst_response",
+        "backend.routers.chat.generate_catalyst_response",
         _fake_generate_catalyst_response,
     )
 

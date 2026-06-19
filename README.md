@@ -1,208 +1,150 @@
-# The Catalyst 🔥
+# The Catalyst
 
-A personalized AI mentor with living memory, designed to be your partner in achieving extraordinary goals. The Catalyst learns from every conversation, adapts to your personality, and provides uniquely tailored guidance.
+A personalized AI mentor with living memory, designed to push you toward your North Star goal. The Catalyst learns from every conversation, adapts to your personality, and provides tailored guidance.
 
-### 📚 Documentation Quick Links
-- **AI Product Architecture**: See [AGENTS.md](AGENTS.md) for details on memory, prompts, and tone modes.
-- **Developer Playbooks**: Read the root-level [skills.md](skills.md) and directory-level files ([backend/skills.md](backend/skills.md), [frontend/skills.md](frontend/skills.md), [tests/skills.md](tests/skills.md)) to guide your coding agents.
+### Documentation
 
-## 🚀 Features
-
--   **Adaptive AI Mentor**: Dynamic personality that shifts between tough coach and wise strategist
--   **Living Memory System**: Two-tier memory that evolves and learns from every interaction
+| Doc | Purpose |
+|-----|---------|
+| [AGENTS.md](AGENTS.md) | AI architecture, memory system, tools, resilience |
+| [skills.md](skills.md) | Root agent playbook and dev commands |
+| [docs/RESILIENCE.md](docs/RESILIENCE.md) | Rate limiting, retry, and fallback details |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Planned features |
+| [backend/skills.md](backend/skills.md) | Backend conventions |
+| [frontend/skills.md](frontend/skills.md) | Frontend conventions |
+| [tests/skills.md](tests/skills.md) | Testing conventions |
 
 ## Features
 
--   **AI-Powered Conversations** — Interactive chat with customizable session types (morning ignition, evening reflection, catch-up)
--   **Memory Management** — Long-term memory synthesis that learns and adapts to user patterns
--   **Goal Tracking** — Hierarchical goal management with North Star methodology
--   **Daily Logging** — Track wins, challenges, gratitude, energy levels, and focus ratings
--   **Insight Extraction** — Automatic pattern recognition and breakthrough identification
--   **Session Tracking** — Streak counting and completion rate monitoring
--   **Function Calling** — Rich AI interactions with database integration
--   **Rate Limiting & Retry Logic** — Intelligent API quota management with automatic retry on overload errors
--   **Function Calling**: AI can manage its own memory and track your progress
--   **Goal-Agnostic**: Set any ambitious goal and let The Catalyst help you achieve it
--   **Powered by Gemini 2.0**: Latest AI technology with thinking capabilities
+- **Adaptive AI mentor** — Tough Coach, Wise Strategist, and Guardian modes
+- **Living memory** — Short-term conversation context + long-term profile synthesis
+- **Daily rituals** — Morning ignition and evening reflection sessions
+- **Goal tracking** — North Star methodology with structured logging
+- **Function calling** — AI tools update memory, logs, and session streaks
+- **Resilient LLM layer** — CLOD primary (`GPT OSS 120B`), Gemini fallback via LiteLLM
 
-## 🛠️ Setup & Installation
+## Setup
 
 ### Prerequisites
 
--   Python 3.9+
--   Google Gemini API key ([Get one here](https://aistudio.google.com/app/apikey))
+- Python 3.11+
+- [CLOD API key](https://clod.io) (primary)
+- Optional: [Gemini API key](https://aistudio.google.com/app/apikey) for fallback only
 
-### Quick Start
-
-1. **Clone the repo, set up the virtual environment, and install dependencies**
-
-    ```bash
-    git clone <your-repo-url>
-    cd TheCatalyst
-    python -m venv venv
-    ```
-
-    *Activate the virtual environment:*
-    - **Windows (PowerShell)**:
-      ```powershell
-      .\venv\Scripts\Activate.ps1
-      ```
-    - **macOS / Linux**:
-      ```bash
-      source venv/bin/activate
-      ```
-
-    *Install packages:*
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-2. **Configure environment variables**
-
-    ```bash
-    copy .env.example .env  # Windows
-    # or
-    cp .env.example .env    # macOS / Linux
-    ```
-
-    Edit `.env` and add your `GEMINI_API_KEY` value.
-
-3. **Start the FastAPI backend**
-
-    ```bash
-    uvicorn backend.app:app --reload --host 0.0.0.0 --port 8000
-    ```
-
-4. **Launch the frontend**
-
-    - Open `frontend/index.html` directly in your browser, **or**
-    - Serve the frontend: `python -m http.server 3000`
-
-## 🧠 How It Works
-
-### The Core Loop
-
-1. **Initialization**: Set your North Star goal and define success metrics
-2. **Morning Ignition**: 5-minute sessions to set daily intentions
-3. **Evening Reflection**: 15-minute deep sessions to process the day
-4. **Memory Synthesis**: AI automatically updates its understanding of you
-
-### The Living Memory System
-
--   **Short-term Memory**: Current conversation context
--   **Long-term Memory**: Evolving profile with patterns, breakthroughs, and insights
--   **Function Calling**: AI can call Python functions to manage its own memory
-
-### Personality Modes
-
--   **Tough Coach** (Default): Direct, challenging, action-oriented
--   **Wise Strategist**: Activated when you need guidance through setbacks
--   **Guardian**: Kicks in when burnout signals are detected
-
-## �️ Project Structure
-
-```
-the-catalyst/
-├── backend/                 # FastAPI backend
-│   ├── app.py               # FastAPI application & routes
-│   ├── catalyst_ai.py       # Gemini integration & prompting
-│   ├── config.py            # Settings and constants
-│   ├── database.py          # SQLAlchemy engine/session helpers
-│   ├── functions.py         # Function-calling registry
-│   ├── memory_manager.py    # Memory/query utilities
-│   ├── models.py            # SQLAlchemy ORM models
-│   ├── rate_limiter.py      # API quota management
-│   ├── rate_limit_config.py # Rate limiting configuration utilities
-│   └── schemas.py           # Pydantic request/response models
-├── frontend/
-│   ├── index.html         # Chat UI shell
-│   ├── app.js             # Frontend logic
-│   └── style.css          # Styling
-├── prompts/               # Core prompts for the agent
-│   ├── system_prompt.txt
-│   └── templates.py
-├── data/                  # SQLite database (auto-created)
-├── app.py                 # Convenience entrypoint for uvicorn
-└── tests & scripts        # Developer tooling
-```
-
-## 📊 API Endpoints
-
--   `GET /` – health/metadata
--   `POST /initialize` – set the North Star goal
--   `POST /chat` – primary interaction endpoint
--   `GET /goals` – retrieve ordered goals
--   `GET /stats` – rolling progress metrics
--   `GET /memory/profile` – latest long-term memory snapshot
--   `GET /health` – backend/system health information
-
-## 🎯 Usage Tips
-
-1. **Be honest**: The more authentic you are, the better The Catalyst can help
-2. **Daily consistency**: Regular morning and evening sessions maximize effectiveness
-3. **Embrace the challenge**: The Catalyst will push you - that's by design
-4. **Trust the process**: The memory system needs time to understand your patterns
-
-## 🔧 Configuration
-
-Edit your `.env` file:
+### Quick start
 
 ```bash
-GEMINI_API_KEY=your_api_key_here
-SHOW_THINKING=false  # Set to true to see AI's thinking process
-DATABASE_PATH=data/catalyst.db
+git clone <your-repo-url>
+cd TheCatalyst
+python -m venv venv
 
-# Rate limiting (optional - defaults are set for Gemini's published limits)
-GEMINI_2_5_PRO_RPM=5         # Requests per minute
-GEMINI_2_5_PRO_TPM=250000    # Tokens per minute
-GEMINI_2_5_PRO_RPD=100       # Requests per day
+# Windows
+.\venv\Scripts\Activate.ps1
+# macOS / Linux
+source venv/bin/activate
 
-GEMINI_2_5_FLASH_RPM=10      # Higher limits for Flash model
-GEMINI_2_5_FLASH_TPM=250000
-GEMINI_2_5_FLASH_RPD=250
+pip install -r requirements.txt
+copy .env.example .env   # or cp on Unix
 ```
 
-### Rate Limiting & Retry Logic
+Edit `.env` — set `CLOD_API_KEY` at minimum.
 
-The Catalyst automatically manages API usage and handles service overload:
+**Run everything** (backend + frontend):
 
--   **Rate Limiting**: Respects Gemini's quotas (5 RPM for Pro, 10 RPM for Flash)
--   **Intelligent Retries**: Automatically retries on 503 "model overloaded" errors
--   **Model Fallback**: Falls back to Gemini 2.5 Flash when Pro is overloaded
--   **Quota-Aware Retries**: Every retry reserves quota and switches models if the primary is saturated
--   **Exponential Backoff**: Uses smart delays (1s, 2s, 4s...) with jitter to prevent thundering herd
+```bash
+python app.py
+```
 
-**Default Limits:**
+**Backend only:**
 
--   **Gemini 2.5 Pro**: 5 RPM, 250K TPM, 100 RPD
--   **Gemini 2.5 Flash**: 10 RPM, 250K TPM, 250 RPD
+```bash
+uvicorn backend.app:app --reload --host 0.0.0.0 --port 8000
+```
 
-Rate limits are enforced per model and can be customized via environment variables. The system will automatically queue requests when limits are approached and retry failed requests due to temporary overload.
+## Project structure
 
-## 🚨 Troubleshooting
+```
+TheCatalyst/
+├── app.py                    # Entry: uvicorn + local frontend server
+├── setup.py                  # First-run helper
+├── requirements.txt
+├── pytest.ini
+├── docs/
+│   ├── RESILIENCE.md         # Rate limits & retry reference
+│   └── ROADMAP.md            # Future work
+├── scripts/
+│   ├── demo_rate_limiting.py
+│   └── demo_retry_logic.py
+├── backend/
+│   ├── app.py                # FastAPI factory (CORS, lifespan)
+│   ├── routers/              # Route modules by domain
+│   │   ├── chat.py           # /initialize, /chat, /initial-greeting
+│   │   ├── conversations.py
+│   │   ├── goals.py
+│   │   ├── memory.py         # profile, logs, insights, stats
+│   │   └── system.py         # /health, /rate-limit-status
+│   ├── catalyst_ai.py        # Prompts, tool loop, retry
+│   ├── llm_client.py         # LiteLLM → CLOD / Gemini
+│   ├── conversation.py       # Transcript & context helpers
+│   ├── config.py
+│   ├── database.py
+│   ├── functions.py          # Tool registry
+│   ├── memory_manager.py
+│   ├── models.py
+│   ├── rate_limiter.py
+│   ├── schemas.py
+│   └── time_utils.py
+├── frontend/
+│   ├── index.html
+│   ├── app.js
+│   ├── style.css
+│   └── experimental/         # Unintegrated UI prototypes
+├── prompts/
+│   └── system_prompt.md
+├── tests/
+└── data/                     # SQLite (gitignored)
+```
 
--   **"Connection error"**: Check your Gemini API key and internet connection
--   **Database issues**: Delete `data/catalyst.db` to reset (loses all data)
--   **Frontend not loading**: Try serving with `python -m http.server` from the root directory
+## Configuration
 
-## 🤝 Contributing
+```bash
+CLOD_API_KEY=your_clod_api_key
+GEMINI_API_KEY=your_gemini_key          # optional fallback
+MODEL_NAME=GPT OSS 120B
+ALT_MODEL_NAME=gemini-2.5-flash
+SHOW_THINKING=false
+```
 
-This is a personal project, but if you're inspired to build something similar:
+Rate limit overrides: `GPT_OSS_120B_RPD=100`, `GEMINI_2_5_FLASH_RPM=10`, etc. See [docs/RESILIENCE.md](docs/RESILIENCE.md).
 
-1. Fork the repository
-2. Focus on the function calling system - it's the key to the living memory
-3. Experiment with different personality frameworks
-4. Consider adding voice interactions or mobile apps
+## API endpoints
 
-## 📈 Roadmap
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/` | Status and model name |
+| POST | `/initialize` | Set North Star goal |
+| POST | `/initial-greeting` | Session greeting |
+| POST | `/chat` | Main chat |
+| GET | `/goals` | Goal hierarchy |
+| GET | `/memory/profile` | LTM snapshot |
+| GET | `/stats` | Streaks and completion rates |
+| GET | `/health` | System health |
+| GET | `/rate-limit-status` | Quota status for UI |
 
--   [ ] Voice interaction support
--   [ ] Mobile app companion
--   [ ] Advanced analytics dashboard
--   [ ] Multi-goal management
--   [ ] Team/coaching features
--   [ ] Integration with productivity tools
+## Testing
+
+```bash
+.\venv\Scripts\python.exe -m pytest tests/ --ignore=tests/test_rate_limiter.py -q
+```
+
+Full suite including rate limiter (~3 min): omit `--ignore`.
+
+## Troubleshooting
+
+- **Connection error** — Check `CLOD_API_KEY` in `.env`
+- **Fallback to Gemini** — Set `GEMINI_API_KEY` if CLOD is down
+- **Reset database** — Delete `data/catalyst.db`
 
 ---
 
-_"The Catalyst isn't just software - it's your partner in transformation."_
+_"The Catalyst isn't just software — it's your partner in transformation."_

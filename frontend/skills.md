@@ -13,7 +13,7 @@ Before modifying any code, review this map to determine which reference file is 
   - When reviewing global conventions, project commands, or the **Self-Improving Skill** workflow.
 * **Look at [AGENTS.md](../AGENTS.md)**:
   - When studying the internal AI mentor's persona, mindset stack, or communication modes.
-  - When debugging how the backend interacts with the Gemini API or executes tools.
+  - When debugging LiteLLM / backend API behavior.
   - When reviewing SQLite schema fields, streaks updates, or memory synthesis logic.
 * **Look at [backend/skills.md](../backend/skills.md)**:
   - When modifying FastAPI routes, database models, time utilities, or prompt builders.
@@ -45,17 +45,15 @@ This directory contains the user-facing HTML shell, CSS layouts, and Vanilla Jav
 
 - [`index.html`](index.html): Chat structure and container nodes.
 - [`style.css`](style.css): Main UI styling sheet. Contains dark mode and typography defaults.
-- [`app.js`](app.js): Application state machine, chat rendering logic, and fetch wrappers.
-- [`enhanced_rate_limit_ui.js`](enhanced_rate_limit_ui.js): Pre-coded components to show rate limit status. Use this to replace standard `fetchJSON` when performing user experience upgrades.
+- [`app.js`](app.js): Application state, chat rendering, fetch wrappers.
+- [`experimental/`](experimental/): Rate-limit UI prototype (not wired into main UI).
 
 ---
 
 ## 4. Local Rules & Architecture
 
 - **Vanilla CSS Flexible Layouts**: Avoid introducing CSS utility libraries like Tailwind unless explicitly requested. Maintain consistency with the existing color palette (dark theme, glassmorphic card overlays, neon-orange flame details).
-- **Quota Warnings Integration**: The frontend is not fully integrated with `enhanced_rate_limit_ui.js`. When implementing features:
-  - Replace `fetchJSON` calls with `fetchJSONWithRateLimit` to handle delays dynamically.
-  - Use `setTypingWithContext` to display the specific stage (thinking, quota wait, retrying) instead of generic typing indicators.
+- **Quota UI**: Prototype lives in `experimental/`. Poll `/rate-limit-status` from `app.js` when integrating.
 - **Strict Element IDs**: Ensure all input widgets and event buttons have unique IDs to prevent selenium/browser test breakage.
 
 ---
@@ -65,7 +63,7 @@ This directory contains the user-facing HTML shell, CSS layouts, and Vanilla Jav
 - **Mistake**: Overriding element styles using inline CSS.
   - *Fix*: Declare classes inside `style.css` and toggle them via classList in Javascript.
 - **Mistake**: Making API requests directly instead of going through backend endpoint wrappers.
-  - *Fix*: Always request backend routes `/chat`, `/goals`, or `/initialize`. Never make external requests directly to Gemini from client javascript.
+  - *Fix*: Always call backend routes only. Never call CLOD or Gemini directly from the browser.
 
 ---
 

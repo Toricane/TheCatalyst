@@ -13,7 +13,6 @@ def create_env_file():
 
     if not env_path.exists():
         if env_example_path.exists():
-            # Copy example file
             with open(env_example_path, "r") as f:
                 content = f.read()
 
@@ -21,13 +20,13 @@ def create_env_file():
                 f.write(content)
 
             print("✅ Created .env file from .env.example")
-            print("⚠️  Please edit .env and add your GEMINI_API_KEY")
+            print("⚠️  Please edit .env and add your CLOD_API_KEY")
             return False
         else:
-            # Create basic .env file
             content = """# The Catalyst Environment Configuration
+CLOD_API_KEY=
 GEMINI_API_KEY=
-MODEL_NAME=gemini-2.5-pro
+MODEL_NAME=GPT OSS 120B
 ALT_MODEL_NAME=gemini-2.5-flash
 SHOW_THINKING=false
 DATABASE_URL=
@@ -36,16 +35,15 @@ DATABASE_URL=
                 f.write(content)
 
             print("✅ Created basic .env file")
-            print("⚠️  Please edit .env and add your GEMINI_API_KEY")
+            print("⚠️  Please edit .env and add your CLOD_API_KEY")
             return False
     else:
-        # Check if API key is set
         with open(env_path, "r") as f:
             content = f.read()
 
         for line in content.splitlines():
-            if line.startswith("GEMINI_API_KEY=") and not line.split("=", 1)[1].strip():
-                print("⚠️  Please edit .env and add your real GEMINI_API_KEY")
+            if line.startswith("CLOD_API_KEY=") and not line.split("=", 1)[1].strip():
+                print("⚠️  Please edit .env and add your real CLOD_API_KEY")
                 return False
 
         print("✅ .env file exists and appears configured")
@@ -65,7 +63,7 @@ def check_dependencies():
         "fastapi",
         "uvicorn",
         "python-dotenv",
-        "google-genai",
+        "litellm",
         "pydantic",
         "sqlalchemy",
     ]
@@ -112,12 +110,13 @@ def main():
         if not deps_ok:
             print("   - Install dependencies: pip install -r requirements.txt")
         if not env_ok:
-            print("   - Configure your .env file with a valid GEMINI_API_KEY")
+            print("   - Configure your .env file with a valid CLOD_API_KEY")
 
     print("\n🔗 Useful commands:")
-    print("   python test_functions.py  - Test function calling system")
-    print("   uvicorn backend.app:app --reload  - Start the server")
-    print("   curl http://localhost:8000/health - Check server health")
+    print("   python scripts/demo_retry_logic.py")
+    print("   python -m pytest tests/ --ignore=tests/test_rate_limiter.py")
+    print("   uvicorn backend.app:app --reload")
+    print("   python app.py")
 
 
 if __name__ == "__main__":

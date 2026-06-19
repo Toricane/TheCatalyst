@@ -3,8 +3,6 @@
 
 import sys
 
-from google.genai.errors import ClientError
-
 from backend.catalyst_ai import (
     _calculate_retry_delay,
     _is_retryable_error,
@@ -12,11 +10,17 @@ from backend.catalyst_ai import (
 )
 
 
+class _MockQuotaError(Exception):
+    def __init__(self, status_code: int, response: dict) -> None:
+        self.status_code = status_code
+        self.response = response
+        super().__init__(response.get("error", {}).get("message", "quota error"))
+
+
 def test_error_detection():
     """Test that we correctly identify retryable errors."""
     print("🧪 Testing error detection...")
 
-    # Test cases for retryable errors
     retryable_errors = [
         Exception("Error 503: Service unavailable"),
         Exception("The model is overloaded. Please try again later."),
@@ -24,7 +28,6 @@ def test_error_detection():
         Exception("503 error occurred"),
     ]
 
-    # Test cases for non-retryable errors
     non_retryable_errors = [
         Exception("Invalid API key"),
         Exception("400 Bad Request"),
@@ -54,7 +57,6 @@ def test_retry_delays():
         expected_base = min(1.0 * (2**attempt), 60.0)
         print(f"  • Attempt {attempt + 1}: {delay:.2f}s (base: {expected_base:.2f}s)")
 
-        # Should be close to expected with some jitter
         assert 0.1 <= delay <= 65.0, f"Delay out of range: {delay}"
 
 
@@ -62,17 +64,40 @@ def test_mock_scenario():
     """Simulate a retry scenario."""
     print("\n🧪 Simulating retry scenario...")
 
-    # Simulate what would happen in a retry scenario
     max_retries = 3
     for attempt in range(max_retries):
         delay = _calculate_retry_delay(attempt)
         print(f"  • Attempt {attempt + 1}/{max_retries}: would wait {delay:.2f}s")
 
-        # In real scenario, we would make API call here
         if attempt == max_retries - 1:
             print("    → Would switch to fallback model")
 
     print("  ✅ Retry simulation complete")
+
+
+def test_parse_quota_error():
+    """Ensure quota errors are parsed for retry guidance."""
+
+    payload = {
+        "error": {
+            "code": 429,
+            "message": "Quota exceeded. Please retry in 24s.",
+            "details": [
+                {
+                    "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                    "retryDelay": "24s",
+                }
+            ],
+        }
+    }
+
+    error = _MockQuotaError(429, payload)
+    info = _parse_quota_error(error)
+
+    assert info is not None
+    assert info.status_code == 429
+    assert info.retry_after == 24.0
+    assert "Quota" in info.message or "quota" in info.message
 
 
 if __name__ == "__main__":
@@ -82,33 +107,10 @@ if __name__ == "__main__":
         test_error_detection()
         test_retry_delays()
         test_mock_scenario()
+        test_parse_quota_error()
 
         print("\n✅ All tests passed! Retry logic is working correctly.")
 
     except Exception as e:
         print(f"\n❌ Test failed: {e}")
         sys.exit(1)
-
-    def test_parse_quota_error():
-        """Ensure quota errors are parsed for retry guidance."""
-
-        payload = {
-            "error": {
-                "code": 429,
-                "message": "Quota exceeded. Please retry in 24s.",
-                "details": [
-                    {
-                        "@type": "type.googleapis.com/google.rpc.RetryInfo",
-                        "retryDelay": "24s",
-                    }
-                ],
-            }
-        }
-
-        error = ClientError(429, payload)
-        info = _parse_quota_error(error)
-
-        assert info is not None
-        assert info.status_code == 429
-        assert info.retry_after == 24.0
-        assert "Quota" in info.message or "quota" in info.message

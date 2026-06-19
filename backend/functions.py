@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from typing import Any, Callable, Dict, List, Optional
 
-from google.genai import types
 from sqlalchemy import func
 
 from .database import get_session
@@ -259,110 +258,136 @@ def update_session_tracking(session_type: str) -> Dict[str, Any]:
     }
 
 
-def create_function_definitions() -> List[types.FunctionDeclaration]:
-    """Create Gemini function declaration objects for registered tools."""
+def create_tool_definitions() -> List[Dict[str, Any]]:
+    """Create OpenAI-format tool definitions for registered tools."""
     return [
-        types.FunctionDeclaration(
-            name="log_daily_reflection",
-            description="Log daily reflection with wins, challenges, gratitude, and priorities",
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "wins": types.Schema(
-                        type=types.Type.STRING,
-                        description="Today's wins and accomplishments",
-                    ),
-                    "challenges": types.Schema(
-                        type=types.Type.STRING,
-                        description="Today's challenges and obstacles",
-                    ),
-                    "gratitude": types.Schema(
-                        type=types.Type.STRING,
-                        description="What the user is grateful for",
-                    ),
-                    "priorities": types.Schema(
-                        type=types.Type.STRING, description="Tomorrow's top priorities"
-                    ),
-                    "energy_level": types.Schema(
-                        type=types.Type.INTEGER, description="Energy level 1-10"
-                    ),
-                    "focus_rating": types.Schema(
-                        type=types.Type.INTEGER, description="Focus rating 1-10"
-                    ),
+        {
+            "type": "function",
+            "function": {
+                "name": "log_daily_reflection",
+                "description": "Log daily reflection with wins, challenges, gratitude, and priorities",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "wins": {
+                            "type": "string",
+                            "description": "Today's wins and accomplishments",
+                        },
+                        "challenges": {
+                            "type": "string",
+                            "description": "Today's challenges and obstacles",
+                        },
+                        "gratitude": {
+                            "type": "string",
+                            "description": "What the user is grateful for",
+                        },
+                        "priorities": {
+                            "type": "string",
+                            "description": "Tomorrow's top priorities",
+                        },
+                        "energy_level": {
+                            "type": "integer",
+                            "description": "Energy level 1-10",
+                        },
+                        "focus_rating": {
+                            "type": "integer",
+                            "description": "Focus rating 1-10",
+                        },
+                    },
+                    "required": ["wins", "challenges", "gratitude", "priorities"],
                 },
-                required=["wins", "challenges", "gratitude", "priorities"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="update_ltm_profile",
-            description="Update the long-term memory profile with new insights",
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "summary_text": types.Schema(
-                        type=types.Type.STRING,
-                        description="Complete updated profile summary",
-                    ),
-                    "patterns": types.Schema(
-                        type=types.Type.STRING,
-                        description="Identified behavioral patterns",
-                    ),
-                    "challenges": types.Schema(
-                        type=types.Type.STRING, description="Recurring challenges"
-                    ),
-                    "breakthroughs": types.Schema(
-                        type=types.Type.STRING, description="Key breakthroughs and wins"
-                    ),
-                    "personality": types.Schema(
-                        type=types.Type.STRING, description="Personality insights"
-                    ),
-                    "current_state": types.Schema(
-                        type=types.Type.STRING, description="Current state and momentum"
-                    ),
-                    "profile_content": types.Schema(
-                        type=types.Type.STRING,
-                        description=(
-                            "Optional alias for summary_text that allows the model to "
-                            "pass the entire profile markdown for auto-section parsing"
-                        ),
-                    ),
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "update_ltm_profile",
+                "description": "Update the long-term memory profile with new insights",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "summary_text": {
+                            "type": "string",
+                            "description": "Complete updated profile summary",
+                        },
+                        "patterns": {
+                            "type": "string",
+                            "description": "Identified behavioral patterns",
+                        },
+                        "challenges": {
+                            "type": "string",
+                            "description": "Recurring challenges",
+                        },
+                        "breakthroughs": {
+                            "type": "string",
+                            "description": "Key breakthroughs and wins",
+                        },
+                        "personality": {
+                            "type": "string",
+                            "description": "Personality insights",
+                        },
+                        "current_state": {
+                            "type": "string",
+                            "description": "Current state and momentum",
+                        },
+                        "profile_content": {
+                            "type": "string",
+                            "description": (
+                                "Optional alias for summary_text that allows the model to "
+                                "pass the entire profile markdown for auto-section parsing"
+                            ),
+                        },
+                    },
+                    "required": ["summary_text"],
                 },
-                required=["summary_text"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="extract_insights",
-            description="Extract and store insights from the conversation",
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "conversation_text": types.Schema(
-                        type=types.Type.STRING,
-                        description="The conversation text to analyze",
-                    ),
-                    "insight_type": types.Schema(
-                        type=types.Type.STRING,
-                        description="Type of insights (pattern, breakthrough, challenge)",
-                    ),
-                    "importance_score": types.Schema(
-                        type=types.Type.INTEGER, description="Importance score 1-5"
-                    ),
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "extract_insights",
+                "description": "Extract and store insights from the conversation",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "conversation_text": {
+                            "type": "string",
+                            "description": "The conversation text to analyze",
+                        },
+                        "insight_type": {
+                            "type": "string",
+                            "description": "Type of insights (pattern, breakthrough, challenge)",
+                        },
+                        "importance_score": {
+                            "type": "integer",
+                            "description": "Importance score 1-5",
+                        },
+                    },
+                    "required": ["conversation_text"],
                 },
-                required=["conversation_text"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="update_session_tracking",
-            description="Update session tracking information",
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "session_type": types.Schema(
-                        type=types.Type.STRING,
-                        description="Type of session (morning, evening, general)",
-                    ),
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "update_session_tracking",
+                "description": "Update session tracking information",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "session_type": {
+                            "type": "string",
+                            "description": "Type of session (morning, evening, general)",
+                        },
+                    },
+                    "required": ["session_type"],
                 },
-                required=["session_type"],
-            ),
-        ),
+            },
+        },
     ]
+
+
+def create_function_definitions() -> List[Dict[str, Any]]:
+    """Backwards-compatible alias for create_tool_definitions."""
+
+    return create_tool_definitions()

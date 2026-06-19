@@ -99,11 +99,11 @@ if __name__ == "__main__":
     except pytest.SkipTest as skip_exc:
         print(f"\n🔧 Setup needed: {skip_exc}")
         print("   1. Make sure the server is running: python app.py")
-        print("   2. Check your .env file has a valid GEMINI_API_KEY")
+        print("   2. Check your .env file has a valid CLOD_API_KEY")
         print("   3. Verify no firewall is blocking port 8000")
     except AssertionError as failure:
         print("\n🔧 Setup needed:")
         print(f"   {failure}")
         print("   1. Make sure the server is running: python app.py")
-        print("   2. Check your .env file has a valid GEMINI_API_KEY")
+        print("   2. Check your .env file has a valid CLOD_API_KEY")
         print("   3. Verify no firewall is blocking port 8000")

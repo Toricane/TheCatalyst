@@ -13,7 +13,7 @@ Before modifying any code, review this map to determine which reference file is 
   - When reviewing global conventions, project commands, or the **Self-Improving Skill** workflow.
 * **Look at [AGENTS.md](../AGENTS.md)**:
   - When studying the internal AI mentor's persona, mindset stack, or communication modes.
-  - When debugging how the backend interacts with the Gemini API or executes tools.
+  - When debugging LiteLLM integration or backend routes.
   - When reviewing SQLite schema fields, streaks updates, or memory synthesis logic.
 * **Look at [backend/skills.md](../backend/skills.md)**:
   - When modifying FastAPI routes, database models, time utilities, or prompt builders.
@@ -32,7 +32,7 @@ This directory contains automated unit and integration tests verifying API endpo
 
 * **Edit here when**:
   - Writing test cases for a new backend feature, API route, or database helper.
-  - Updating test mocks when the Gemini response structure changes.
+  - Updating test mocks when the LiteLLM response structure changes.
   - Adding assertions to cover a newly discovered edge case.
 
 * **Do NOT edit here when**:
@@ -43,7 +43,8 @@ This directory contains automated unit and integration tests verifying API endpo
 
 ## 3. Important Files
 
-- [`test_server.py`](test_server.py): Integration tests for FastAPI endpoints (`GET /`, `/initialize`, `/chat`, `/goals`).
+- [`test_conversation_history.py`](test_conversation_history.py): Conversation CRUD, export, chat dedup (TestClient + in-memory DB).
+- [`test_server.py`](test_server.py): Live integration against running server (skips if down).
 - [`test_rate_limiter.py`](test_rate_limiter.py): Evaluates the RPM/TPM queue delays.
 - [`test_retry_logic.py`](test_retry_logic.py): Tests the exponential backoff calculation and fallback model logic.
 - [`test_memory_manager.py`](test_memory_manager.py): Validates profile section parsing and LTM state updates.
@@ -53,7 +54,7 @@ This directory contains automated unit and integration tests verifying API endpo
 
 ## 4. Testing Rules
 
-- **Use Mocks for External APIs**: Never run tests that make live calls to the Gemini API. This will exhaust developer quotas and trigger test failures. Always mock `genai.Client` and check parameter invocations.
+- **Use Mocks for External APIs**: Never run tests that make live calls to CLOD or Gemini. Always mock `llm_client.acompletion` and check parameter invocations.
 - **Isolate DB Sessions**: Use scoped, temporary SQLite sessions (e.g. SQLite `:memory:`) or clear test database records between assertions.
 - **Do Not Disable Tests**: If a test fails, fix the code or update the test mock rather than commenting it out or deleting it.
 

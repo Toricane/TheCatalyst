@@ -2,76 +2,52 @@
 
 ---
 
-## 🧭 System Documentation Index & Handoffs
+## System Documentation Index
 
-Before modifying any code, review this map to determine which reference file is relevant to your task:
-
-* **Look at [backend/skills.md](skills.md) (This File)**:
-  - When modifying FastAPI routes, database models, time utilities, or prompt builders.
-* **Look at [skills.md](../skills.md) (Root Playbook)**:
-  - When starting a new chat session to ground yourself in general project guidelines.
-  - When reviewing global conventions, project commands, or the **Self-Improving Skill** workflow.
-* **Look at [AGENTS.md](../AGENTS.md)**:
-  - When studying the internal AI mentor's persona, mindset stack, or communication modes.
-  - When debugging how the backend interacts with the Gemini API or executes tools.
-  - When reviewing SQLite schema fields, streaks updates, or memory synthesis logic.
-* **Look at [frontend/skills.md](../frontend/skills.md)**:
-  - When updating CSS, editing html templates, or integrating the rate limiter status UI.
-* **Look at [tests/skills.md](../tests/skills.md)**:
-  - When writing test fixtures, running pytests, or verifying changes before commit.
+| Task | Read |
+|------|------|
+| Routes, DB, prompts | This file |
+| Global conventions | [skills.md](../skills.md) |
+| AI persona & memory | [AGENTS.md](../AGENTS.md) |
+| Rate limits & retry | [docs/RESILIENCE.md](../docs/RESILIENCE.md) |
+| Frontend | [frontend/skills.md](../frontend/skills.md) |
+| Tests | [tests/skills.md](../tests/skills.md) |
 
 ---
 
-## 1. Purpose
+## Layout
 
-This directory contains the FastAPI backend, SQLAlchemy database integration, SQLite models, memory management utilities, and Gemini API connectors.
-
----
-
-## 2. When to Edit This Directory
-
-* **Edit here when**:
-  - Changing API endpoints or adding route paths.
-  - Modifying database schemas or ORM structures.
-  - Adjusting Gemini prompt composition, retry logic, or rate-limiter windows.
-  - Modifying memory extraction methods.
-
-* **Do NOT edit here when**:
-  - Making changes to the HTML layout or CSS styles.
-  - Editing client-side AJAX requests or frontend event loops (unless API contracts change).
-
----
-
-## 3. Important Files
-
-- [`app.py`](app.py): API routes. Uses `Session` Dependency injection (`get_session`).
-- [`catalyst_ai.py`](catalyst_ai.py): High-level AI response handler, prompts builder, and tool callers.
-- [`rate_limiter.py`](rate_limiter.py): Class managing rate limits based on token size estimates.
-- [`models.py`](models.py): ORM schemas (`Goal`, `DailyLog`, `LTMProfile`, `Conversation`, `SessionTracking`).
+| Module | Role |
+|--------|------|
+| `app.py` | FastAPI factory — lifespan, CORS, `register_routers()` |
+| `routers/chat.py` | `/initialize`, `/initial-greeting`, `/chat` |
+| `routers/conversations.py` | Conversation CRUD, export, message context |
+| `routers/goals.py` | Goal hierarchy |
+| `routers/memory.py` | LTM profile, logs, insights, stats |
+| `routers/system.py` | `/health`, `/rate-limit-status`, debug endpoints |
+| `catalyst_ai.py` | Prompt assembly, LiteLLM calls, tool loop |
+| `llm_client.py` | CLOD + Gemini via LiteLLM |
+| `conversation.py` | Transcript loading, markdown export, context refs |
+| `dependencies.py` | `get_db()` for FastAPI |
+| `functions.py` | Registered AI tools |
+| `memory_manager.py` | LTM getters, missed-session detection |
+| `rate_limiter.py` | Per-model quota queue |
 
 ---
 
-## 4. Local Rules & Architecture
+## Rules
 
-- **Session Lifecycle**: Database sessions are injected via FastAPI dependencies: `db: Session = Depends(get_session)`. Do not instantiate `SessionLocal()` directly in endpoint handlers.
-- **Asynchronous Safe Calls**: Use `await` for rate-limiter holds: `await rate_limiter.wait_for_request(model, estimated_tokens)`.
-- **System Prompt Integrity**: Base instructions reside in `prompts/system_prompt.md`. Do not hardcode tone controls inside `backend/catalyst_ai.py`. Use `_build_system_prompt` to bundle inputs dynamically.
-
----
-
-## 5. Common Mistakes
-
-- **Mistake**: Forgetting to handle empty replies or tool callback issues.
-  - *Fix*: The backend uses `_retry_once_if_empty` and handles iterative tool executions (up to 3 loops) in `generate_catalyst_response`. Maintain this structure.
-- **Mistake**: Using naive `datetime.now()` instead of timezone-aware datetimes.
-  - *Fix*: Use `local_now()` and `utc_now()` from `backend/time_utils.py` to keep SQLite timestamp consistency.
+- **DB sessions**: Use `db: Session = Depends(get_db)` in routers. Do not create `SessionLocal()` in handlers.
+- **Rate limiter**: Always `await rate_limiter.wait_for_request(model, estimated_tokens)` before LLM calls.
+- **Prompts**: Base tone in `prompts/system_prompt.md`; session instructions in `catalyst_ai.get_session_instructions()`.
+- **Time**: Use `local_now()` / `utc_now()` from `time_utils.py`.
+- **New routes**: Add to the appropriate file under `routers/`, register in `routers/__init__.py`.
 
 ---
 
-## 6. Debugging Playbook
+## Debugging
 
-1. **Verify API Key**: Check if `GEMINI_API_KEY` is loaded by inspecting environment variables or visiting the `/health` endpoint.
-2. **Watch SQLite Lock Errors**: Ensure database queries commit or rollback cleanly inside endpoints.
-3. **Verify API Responses**: If Gemini returns a blank or unexpected JSON structure:
-   - Inspect the logs for `⚠️ Gemini returned empty response`.
-   - Run the custom unit tests (`python test_functions.py` or similar helper tests) to see raw payloads.
+1. Check `CLOD_API_KEY` via `/health`.
+2. Watch for SQLite lock errors — ensure commits in route handlers.
+3. Empty model replies log `⚠️ Model returned empty response` — inspect retry/fallback in `catalyst_ai.py`.
+4. Run `python -m pytest tests/ --ignore=tests/test_rate_limiter.py`.

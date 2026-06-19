@@ -2,7 +2,7 @@
 fastapi
 uvicorn[standard]
 python-dotenv
-google-genai
+litellm
 pydantic
 python-multipart
 aiofiles

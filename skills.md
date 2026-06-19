@@ -13,12 +13,16 @@ Before modifying any code, review this map to determine which reference file is 
   - When reviewing global conventions, project commands, or the **Self-Improving Skill** workflow.
 * **Look at [AGENTS.md](AGENTS.md)**:
   - When studying the internal AI mentor's persona, mindset stack, or communication modes.
-  - When debugging how the backend interacts with the Gemini API or executes tools.
+  - When debugging how the backend interacts with LiteLLM (CLOD/Gemini) or executes tools.
   - When reviewing SQLite schema fields, streaks updates, or memory synthesis logic.
 * **Look at [backend/skills.md](backend/skills.md)**:
   - When modifying FastAPI routes, database models, time utilities, or prompt builders.
 * **Look at [frontend/skills.md](frontend/skills.md)**:
   - When updating CSS, editing html templates, or integrating the rate limiter status UI.
+* **Look at [docs/RESILIENCE.md](docs/RESILIENCE.md)**:
+  - When changing rate limits, retry behavior, or fallback logic.
+* **Look at [docs/ROADMAP.md](docs/ROADMAP.md)**:
+  - When scoping future features.
 * **Look at [tests/skills.md](tests/skills.md)**:
   - When writing test fixtures, running pytests, or verifying changes before commit.
 
@@ -34,29 +38,30 @@ Before modifying any code, review this map to determine which reference file is 
 
 - **Backend**: Python 3.13, FastAPI, Uvicorn, SQLAlchemy (SQLite database).
 - **Frontend**: HTML5, Vanilla CSS, Vanilla Javascript (ES6).
-- **AI Engine**: Google Gemini API via `google-genai` SDK.
+- **AI Engine**: LiteLLM — CLOD primary (`GPT OSS 120B` at `api.clod.io/v1`), Gemini fallback.
 - **Testing**: Pytest.
 
 ---
 
 ## 3. Folder Structure Map
 
-- [`backend/`](backend/): Core FastAPI application.
-  - [`backend/app.py`](backend/app.py): API endpoint route handlers.
-  - [`backend/catalyst_ai.py`](backend/catalyst_ai.py): Gemini API client integration, retry and fallback wrappers.
-  - [`backend/database.py`](backend/database.py): SQLite session lifecycle and engine.
-  - [`backend/functions.py`](backend/functions.py): Tool declarations and callbacks.
-  - [`backend/memory_manager.py`](backend/memory_manager.py): Profile extraction and snapshot getters.
-  - [`backend/models.py`](backend/models.py): ORM schemas.
-  - [`backend/rate_limiter.py`](backend/rate_limiter.py): Async RPM/TPM limiter.
-- [`frontend/`](frontend/): Frontend static assets.
-  - [`frontend/index.html`](frontend/index.html): Chat interface.
-  - [`frontend/app.js`](frontend/app.js): Application logic and API fetch wrappers.
-  - [`frontend/style.css`](frontend/style.css): Main UI style layout.
-  - [`frontend/enhanced_rate_limit_ui.js`](frontend/enhanced_rate_limit_ui.js): Enhanced rate limit UI features (ready for integration).
-- [`prompts/`](prompts/): AI system prompts.
-  - [`prompts/system_prompt.md`](prompts/system_prompt.md): Markdown system prompt containing tone and rules.
-- [`tests/`](tests/): Unit and integration test suite.
+- [`backend/`](backend/): FastAPI application.
+  - [`backend/app.py`](backend/app.py): App factory (CORS, lifespan, router registration).
+  - [`backend/routers/`](backend/routers/): Route modules (`chat`, `conversations`, `goals`, `memory`, `system`).
+  - [`backend/catalyst_ai.py`](backend/catalyst_ai.py): LiteLLM orchestration, prompts, tool loop, retry.
+  - [`backend/llm_client.py`](backend/llm_client.py): CLOD / Gemini routing.
+  - [`backend/conversation.py`](backend/conversation.py): Transcript, export, and context helpers.
+  - [`backend/dependencies.py`](backend/dependencies.py): FastAPI `get_db`.
+  - [`backend/database.py`](backend/database.py): SQLite engine and sessions.
+  - [`backend/functions.py`](backend/functions.py): Tool registry.
+  - [`backend/memory_manager.py`](backend/memory_manager.py): LTM queries and missed-session logic.
+  - [`backend/rate_limiter.py`](backend/rate_limiter.py): Async quota limiter.
+- [`frontend/`](frontend/): Static chat UI (`index.html`, `app.js`, `style.css`).
+  - [`frontend/experimental/`](frontend/experimental/): Unintegrated rate-limit UI prototype.
+- [`prompts/system_prompt.md`](prompts/system_prompt.md): Base agent persona (loaded at runtime).
+- [`docs/`](docs/): Technical references (`RESILIENCE.md`, `ROADMAP.md`).
+- [`scripts/`](scripts/): Dev demos (rate limiting, retry classification).
+- [`tests/`](tests/): Pytest suite.
 
 ---
 
@@ -112,7 +117,7 @@ Always use the Python virtual environment (`venv`) to run commands.
 ## 7. Debugging Playbook
 
 When something fails:
-1. **Identify the Layer**: Determine if it is frontend UI, FastAPI backend logic, Gemini API connection, or SQLite database state.
+1. **Identify the Layer**: Frontend UI, FastAPI route (`backend/routers/`), LiteLLM client, or SQLite.
 2. **Examine Logs**: Run the app locally and watch terminal stdout/stderr or verify pytest traceback.
 3. **Isolate Code**: Reproduce the error with the smallest possible test script.
 4. **Fix Root Cause**: Resolve the bug without adding layers of bypass logic.

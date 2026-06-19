@@ -10,13 +10,15 @@ Before modifying any code, review this map to determine which reference file is 
 
 * **Look at [AGENTS.md](AGENTS.md) (This File)**:
   - When studying the internal AI mentor's persona, mindset stack, or communication modes.
-  - When debugging how the backend interacts with the Gemini API or executes tools.
+  - When debugging how the backend interacts with LiteLLM (CLOD/Gemini) or executes tools.
   - When reviewing SQLite schema fields, streaks updates, or memory synthesis logic.
 * **Look at [skills.md](skills.md) (Root Playbook)**:
   - When starting a new chat session to ground yourself in general project guidelines.
   - When reviewing global conventions, project commands, or the **Self-Improving Skill** workflow.
+* **Look at [docs/RESILIENCE.md](docs/RESILIENCE.md)**:
+  - When modifying rate limits, retry logic, or model fallback.
 * **Look at [backend/skills.md](backend/skills.md)**:
-  - When modifying FastAPI routes, database models, time utilities, or prompt builders.
+  - When modifying FastAPI routes, database models, or prompt builders.
 * **Look at [frontend/skills.md](frontend/skills.md)**:
   - When updating CSS, editing html templates, or integrating the rate limiter status UI.
 * **Look at [tests/skills.md](tests/skills.md)**:
@@ -56,10 +58,12 @@ Instead of a simple database of raw chat history, the agent uses a **two-tier me
 
 ```mermaid
 graph TD
-    User([User Message]) --> STM[Short-Term Memory <br> Current Conversation Context]
-    STM --> Gemini{Gemini API}
-    LTM[(Database: LTM Profile)] -->|Injected as Context| Gemini
-    Gemini -->|Call Tools| Tools[Function Registry]
+    User([User Message]) --> STM[Short-Term Memory]
+    STM --> LLM[LiteLLM]
+    LTM[(Database: LTM Profile)] -->|Injected as Context| LLM
+    LLM -->|CLOD primary| CLOD[CLOD API]
+    LLM -->|Fallback| Gemini[Gemini API]
+    LLM -->|Call Tools| Tools[Function Registry]
     Tools -->|Updates| LTM
     Tools -->|Saves Wins/Gratitude| DailyLogs[(Database: Daily Logs)]
 ```
@@ -71,7 +75,7 @@ graph TD
 ### Tier 2: Long-Term Memory (LTM)
 * Stored in the SQLite database under `ltm_profile` table (columns: `id`, `summary_text`, `last_updated`).
 * Contains an AI-curated summary of the user's personality traits, recurring challenges, key patterns, and motivations.
-* The LTM profile text is injected directly into the Gemini system instructions on every message request, allowing the model to know the user instantly.
+* The LTM profile text is injected into the system prompt on every message request via LiteLLM.
 
 ### The End-of-Session Synthesis
 During the **Evening Reflection** ritual, the agent triggers a synthesis step:
@@ -83,7 +87,7 @@ During the **Evening Reflection** ritual, the agent triggers a synthesis step:
 
 ## 3. Function & Tool Calling System
 
-The agent is empowered to modify its database states and track user goals by calling structured Python functions via the Gemini API's Tool Calling system.
+The agent calls structured Python functions via LiteLLM tool calling (OpenAI-format schemas).
 
 The following tools are defined in [backend/functions.py](backend/functions.py) and registered with the model:
 
@@ -98,19 +102,21 @@ The following tools are defined in [backend/functions.py](backend/functions.py) 
 
 ## 4. API Resilience: Rate Limiting & Retry Logic
 
-Because the Catalyst runs on free-tier limits, it features a custom-built, queue-aware client middleware to avoid api exhaustion and 503 errors.
+Because the Catalyst runs on provider rate limits, it features a custom-built, queue-aware client middleware to avoid API exhaustion and 503 errors.
 
 ### Per-Model Token & Request Queues
 The [backend/rate_limiter.py](backend/rate_limiter.py) computes incoming token sizes and schedules requests to fit inside strict windows:
-* **Gemini 2.5 Pro**: 5 Requests Per Minute (RPM), 250,000 Tokens Per Minute (TPM), 100 Requests Per Day (RPD).
-* **Gemini 2.5 Flash**: 10 RPM, 250,000 TPM, 250 RPD.
+* **GPT OSS 120B (CLOD primary)**: 0 RPM, 0 TPM (not published — disabled client-side), **100 RPD** (CLOD free tier).
+* **gemini-2.5-flash (fallback)**: 10 RPM, 250,000 TPM, 250 RPD.
+
+AI calls route through **LiteLLM** in [backend/llm_client.py](backend/llm_client.py): CLOD at `https://api.clod.io/v1` (OpenAI-compatible) with Gemini fallback when CLOD is unavailable.
 
 ### Exponential Backoff with Jitter
 If the API returns a 503 "model overloaded" or "unavailable" error, the agent intercepts it and retries up to **4 times** using:
 $$\text{delay} = \min(\text{base\_delay} \times 2^{\text{attempt}}, \text{max\_delay}) \pm \text{jitter}$$
 
 ### Model Fallback
-If the primary model (`gemini-2.5-pro`) remains overloaded or rate-limited after several attempts, the backend automatically falls back to `gemini-2.5-flash` to execute the conversation and tool calls, ensuring zero downtime.
+If the primary model (`GPT OSS 120B` via CLOD) remains overloaded or rate-limited after several attempts, the backend automatically falls back to `gemini-2.5-flash` (via LiteLLM) to execute the conversation and tool calls.
 
 ---
 
@@ -119,9 +125,9 @@ If the primary model (`gemini-2.5-pro`) remains overloaded or rate-limited after
 To prevent this architecture document from becoming stale as the product grows, coding agents must follow these rules:
 
 * **When to Update This File**:
-  - Whenever you add, rename, or deprecate a Python function registered as a Gemini Tool.
+  - Whenever you add, rename, or deprecate a Python function registered as an LLM tool.
   - If you change the priority, keys, or tone triggers of the Catalyst's Mindset Stack.
-  - If you configure a different default model (e.g. moving to Gemini 3.0) or modify the fallback priority.
+  - If you configure a different default model or modify the CLOD/Gemini fallback priority.
   - If you modify the database schema affecting SQLite tables (`models.py`) or the LTM synthesis cycle.
 * **How to Update This File**:
   - Keep the language direct, clear, and focused on technical specifications.

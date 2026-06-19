@@ -1,4 +1,4 @@
-"""Asynchronous rate limiter for Gemini API usage."""
+"""Asynchronous rate limiter for LLM API usage."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Deque, Dict, Optional
 
-from .config import GEMINI_RATE_LIMITS
+from .config import MODEL_RATE_LIMITS
 
 _TOKEN_WINDOW_SECONDS = 60.0
 _DAY_WINDOW_SECONDS = 86_400.0
@@ -26,7 +26,7 @@ class _ModelState:
 
 
 class RateLimiter:
-    """Rate limiter that enforces per-model quotas for Gemini usage."""
+    """Rate limiter that enforces per-model quotas for LLM usage."""
 
     def __init__(self, limits: Dict[str, Dict[str, int]]) -> None:
         self._limits = limits
@@ -212,4 +212,4 @@ def estimate_tokens(*segments: Optional[str]) -> int:
     return estimated
 
 
-rate_limiter = RateLimiter(GEMINI_RATE_LIMITS)
+rate_limiter = RateLimiter(MODEL_RATE_LIMITS)

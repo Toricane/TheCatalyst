@@ -13,20 +13,17 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
-from google import genai
-from google.genai import errors as genai_errors
-from google.genai import types
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .config import (
     ALT_MODEL_NAME,
-    GEMINI_API_KEY,
     MODEL_NAME,
     SHOW_THINKING,
     SYSTEM_PROMPT_PATH,
 )
-from .functions import catalyst_functions, create_function_definitions
+from .functions import catalyst_functions, create_tool_definitions
+from .llm_client import acompletion, is_configured
 from .memory_manager import extract_section
 from .models import LTMProfile
 from .rate_limiter import estimate_tokens, rate_limiter
@@ -45,22 +42,17 @@ SAFETY_FALLBACK_RESPONSE = (
     "safety reasons. Let's try reframing it or shifting to a different angle."
 )
 
-if not GEMINI_API_KEY:
-    # We don't raise immediately to allow the app to start for offline testing,
-    # but we will surface a clearer error when a call is attempted.
-    client: Optional[genai.Client] = None
-else:
-    client = genai.Client(api_key=GEMINI_API_KEY)
-
-
 def _is_retryable_error(error: Exception) -> bool:
-    """Check if an error is retryable (503 overload errors)."""
+    """Check if an error is retryable (503 overload / connection errors)."""
     error_str = str(error).lower()
     return (
         "503" in error_str
+        or "502" in error_str
+        or "504" in error_str
         or "overloaded" in error_str
         or "unavailable" in error_str
         or "try again later" in error_str
+        or "connection" in error_str
     )
 
 
@@ -72,7 +64,7 @@ class QuotaErrorInfo:
 
 
 def _parse_quota_error(error: Exception) -> Optional[QuotaErrorInfo]:
-    """Extract structured information from Gemini quota errors."""
+    """Extract structured information from API quota (429) errors."""
 
     status_code: Optional[int] = getattr(error, "status_code", None)
     payload: Optional[Dict[str, Any]] = getattr(error, "response", None)
@@ -138,7 +130,7 @@ def _parse_quota_error(error: Exception) -> Optional[QuotaErrorInfo]:
         if match:
             retry_after = float(match.group(1))
 
-    message = error_message or "Gemini quota exceeded."
+    message = error_message or "API quota exceeded."
     return QuotaErrorInfo(status_code=429, message=message, retry_after=retry_after)
 
 
@@ -150,10 +142,11 @@ def _calculate_retry_delay(attempt: int) -> float:
 
 
 async def _make_api_call_with_retry(
-    client: genai.Client,
     model: str,
-    contents: List[types.Content],
-    config: types.GenerateContentConfig,
+    messages: List[Dict[str, Any]],
+    *,
+    tools: Optional[List[Dict[str, Any]]] = None,
+    temperature: float = 0.7,
     estimated_prompt_tokens: int,
     context: str = "initial",
 ) -> Tuple[Any, str]:
@@ -161,31 +154,35 @@ async def _make_api_call_with_retry(
     last_error = None
     primary_model = model
     fallback_model = ALT_MODEL_NAME if ALT_MODEL_NAME != primary_model else None
+    last_was_retryable = False
 
     for attempt in range(MAX_RETRIES):
-        # Determine which model to use for this attempt
         current_model = primary_model
         switched_due_to_limit = False
 
         if attempt > 0 and fallback_model:
-            wait_primary = await rate_limiter.get_wait_time(
-                primary_model, estimated_prompt_tokens
-            )
-            wait_fallback = await rate_limiter.get_wait_time(
-                fallback_model, estimated_prompt_tokens
-            )
+            if last_was_retryable:
+                current_model = fallback_model
+                print(
+                    f"↪️  Switching to fallback model '{current_model}' for {context} "
+                    "call after primary failure"
+                )
+            else:
+                wait_primary = await rate_limiter.get_wait_time(
+                    primary_model, estimated_prompt_tokens
+                )
+                wait_fallback = await rate_limiter.get_wait_time(
+                    fallback_model, estimated_prompt_tokens
+                )
 
-            if wait_primary > 0:
-                # Prefer the model with the shorter wait time when possible
-                if wait_fallback == 0 or wait_fallback <= wait_primary:
-                    current_model = fallback_model
-                    switched_due_to_limit = True
+                if wait_primary > 0:
+                    if wait_fallback == 0 or wait_fallback <= wait_primary:
+                        current_model = fallback_model
+                        switched_due_to_limit = True
         elif attempt > 0 and not fallback_model:
-            # No fallback available, continue with primary
             pass
 
         if attempt == 0 and fallback_model:
-            # Initial attempt should still respect current availability
             wait_primary = await rate_limiter.get_wait_time(
                 primary_model, estimated_prompt_tokens
             )
@@ -202,7 +199,6 @@ async def _make_api_call_with_retry(
                 f"↪️  Switching to fallback model '{current_model}' for {context} call due to rate limit"
             )
 
-        # Reserve quota for the selected model (counts towards rate limits)
         await rate_limiter.wait_for_request(current_model, estimated_prompt_tokens)
 
         try:
@@ -211,11 +207,11 @@ async def _make_api_call_with_retry(
                     f"🔄 Retry attempt {attempt + 1}/{MAX_RETRIES} for {context} call (using {current_model})"
                 )
 
-            response = await asyncio.to_thread(
-                client.models.generate_content,
+            response = await acompletion(
                 model=current_model,
-                contents=contents,
-                config=config,
+                messages=messages,
+                tools=tools,
+                temperature=temperature,
             )
 
             if attempt > 0:
@@ -223,15 +219,12 @@ async def _make_api_call_with_retry(
                     f"✅ {context.capitalize()} call succeeded on attempt {attempt + 1}"
                 )
 
+            last_was_retryable = False
             return response, current_model
 
         except Exception as exc:
-            quota_info: Optional[QuotaErrorInfo] = None
+            quota_info: Optional[QuotaErrorInfo] = _parse_quota_error(exc)
 
-            if isinstance(exc, genai_errors.ClientError):
-                quota_info = _parse_quota_error(exc)
-
-            # Release reserved quota since the request failed
             await rate_limiter.record_usage(current_model, 0)
 
             if quota_info and quota_info.retry_after:
@@ -243,7 +236,7 @@ async def _make_api_call_with_retry(
                 last_error = HTTPException(
                     status_code=quota_info.status_code,
                     detail={
-                        "error": "Gemini quota exceeded",
+                        "error": "API quota exceeded",
                         "model": current_model,
                         "message": quota_info.message,
                         "retry_after_seconds": quota_info.retry_after,
@@ -252,14 +245,15 @@ async def _make_api_call_with_retry(
                 print(
                     f"🚫 {context.capitalize()} call hit quota limit on {current_model}: {quota_info.message}"
                 )
+                last_was_retryable = False
                 if attempt < MAX_RETRIES - 1:
                     continue
                 raise last_error
 
             last_error = exc
+            last_was_retryable = _is_retryable_error(exc)
 
-            if not _is_retryable_error(exc):
-                # Non-retryable error, fail immediately
+            if not last_was_retryable:
                 raise exc
 
             if attempt < MAX_RETRIES - 1:
@@ -272,7 +266,6 @@ async def _make_api_call_with_retry(
             else:
                 print(f"❌ All retry attempts failed for {context} call")
 
-    # All retries exhausted
     if isinstance(last_error, HTTPException):
         raise last_error
 
@@ -293,10 +286,10 @@ async def generate_catalyst_response(
     primary_model: str = MODEL_NAME,
 ) -> Dict[str, Any]:
     """Generate a response from the Catalyst AI agent."""
-    if client is None:
+    if not is_configured():
         raise HTTPException(
             status_code=500,
-            detail="Gemini client not configured; missing GEMINI_API_KEY",
+            detail="AI client not configured; missing CLOD_API_KEY",
         )
 
     fallback_model = (
@@ -318,95 +311,77 @@ async def generate_catalyst_response(
     except TypeError:  # pragma: no cover - fallback for unexpected types
         context_snapshot = context
 
-    contents = [types.Content(role="user", parts=[types.Part.from_text(text=message)])]
-
     try:
-        function_declarations = create_function_definitions()
-        tools = [types.Tool(function_declarations=function_declarations)]
+        tools = create_tool_definitions()
     except Exception as exc:  # pragma: no cover - defensive
         print(f"⚠️  Function calling disabled due to error: {exc}")
         tools = None
 
-    config = types.GenerateContentConfig(
-        temperature=0.7,
-        tools=tools,
-        response_modalities=["TEXT"],
-        system_instruction=system_prompt,
-    )
-
-    conversation: List[types.Content] = list(contents)
+    conversation: List[Dict[str, Any]] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": message},
+    ]
     executed_calls: List[Dict[str, Any]] = []
+    temperature = 0.7
 
-    # Rate limiting: estimate tokens for informed reservations
     estimated_tokens = estimate_tokens(system_prompt, message)
 
-    # Make initial API call with retry logic
     response, current_model_used = await _make_api_call_with_retry(
-        client,
         primary_model,
         conversation,
-        config,
-        estimated_tokens,
-        "initial",
+        tools=tools,
+        temperature=temperature,
+        estimated_prompt_tokens=estimated_tokens,
+        context="initial",
     )
 
     response, current_model_used, _ = await _retry_once_if_empty(
         response,
         current_model_used,
-        client=client,
         primary_model=primary_model,
         fallback_model=fallback_model,
         conversation=conversation,
-        config=config,
+        tools=tools,
+        temperature=temperature,
         estimated_tokens=estimated_tokens,
         context="initial",
     )
 
-    # Handle iterative tool calling if the model requests it.
     for _ in range(3):
         pending_calls = _extract_function_calls(response)
         if not pending_calls:
             break
 
-        if response.candidates and response.candidates[0].content:
-            conversation.append(response.candidates[0].content)
+        _append_assistant_message(conversation, response)
 
-        tool_messages: List[types.Content] = []
-        for name, args in pending_calls:
+        for name, args, tool_call_id in pending_calls:
             result_payload, call_record = _execute_tool(name, args)
             executed_calls.append(call_record)
-            tool_messages.append(
-                types.Content(
-                    role="tool",
-                    parts=[
-                        types.Part.from_function_response(
-                            name=name,
-                            response=result_payload,
-                        )
-                    ],
-                )
+            conversation.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": json.dumps(result_payload),
+                }
             )
 
-        conversation.extend(tool_messages)
-
-        # Make follow-up API call with retry logic
         response, current_model_used = await _make_api_call_with_retry(
-            client,
             primary_model,
             conversation,
-            config,
-            0,
-            "follow-up",
+            tools=tools,
+            temperature=temperature,
+            estimated_prompt_tokens=0,
+            context="follow-up",
         )
 
         response, current_model_used, _ = await _retry_once_if_empty(
             response,
             current_model_used,
-            client=client,
             primary_model=primary_model,
             fallback_model=fallback_model,
             conversation=conversation,
-            config=config,
+            tools=tools,
+            temperature=temperature,
             estimated_tokens=0,
             context="follow-up",
         )
@@ -416,13 +391,12 @@ async def generate_catalyst_response(
             detail="AI produced repeated tool calls without a final response.",
         )
 
-    # Record actual token usage after successful response
     response_text = _extract_response_text(response)
     if not response_text:
         await rate_limiter.record_usage(current_model_used, 0)
         debug_summary = _summarize_empty_response(response)
         print(
-            "⚠️  Gemini returned empty response for catalyst reply. "
+            "⚠️  Model returned empty response for catalyst reply. "
             f"Summary: {debug_summary}"
         )
         response_text = _derive_fallback_message(response)
@@ -452,11 +426,11 @@ async def generate_catalyst_response(
 async def update_ltm_memory(
     user_message: str, ai_response: str, context: Dict[str, Any], session: Session
 ) -> bool:
-    """Request a memory synthesis update from the faster Gemini model."""
-    if client is None:
+    """Request a memory synthesis update from the primary model."""
+    if not is_configured():
         raise HTTPException(
             status_code=500,
-            detail="Gemini client not configured; missing GEMINI_API_KEY",
+            detail="AI client not configured; missing CLOD_API_KEY",
         )
 
     if SYSTEM_PROMPT_PATH.exists():
@@ -491,35 +465,29 @@ async def update_ltm_memory(
     Be concise but insightful. Focus on what will be most useful for future interactions.
     """
 
-    contents = [
-        types.Content(role="user", parts=[types.Part.from_text(text=synthesis_prompt)])
+    messages = [
+        {"role": "system", "content": base_profile_text},
+        {"role": "user", "content": synthesis_prompt},
     ]
 
-    config = types.GenerateContentConfig(
-        temperature=0.3,
-        system_instruction=base_profile_text,
-    )
-
-    # Rate limiting for memory synthesis
     estimated_tokens = estimate_tokens(synthesis_prompt, base_profile_text)
-    await rate_limiter.wait_for_request(ALT_MODEL_NAME, estimated_tokens)
 
     try:
-        response = await asyncio.to_thread(
-            client.models.generate_content,
-            model=ALT_MODEL_NAME,
-            contents=contents,
-            config=config,
+        response, model_used = await _make_api_call_with_retry(
+            MODEL_NAME,
+            messages,
+            temperature=0.3,
+            estimated_prompt_tokens=estimated_tokens,
+            context="ltm-synthesis",
         )
     except Exception as exc:  # pragma: no cover
         print(f"Error updating LTM: {exc}")
         return False
 
-    new_profile = response.text if hasattr(response, "text") and response.text else ""
+    new_profile = _extract_response_text(response)
 
-    # Record token usage for memory synthesis
     memory_tokens = estimate_tokens(new_profile)
-    await rate_limiter.record_usage(ALT_MODEL_NAME, memory_tokens)
+    await rate_limiter.record_usage(model_used, memory_tokens)
 
     sections = {
         "patterns": extract_section(new_profile, "Patterns"),
@@ -757,95 +725,73 @@ def reconstruct_system_prompt(
     return prompt, runtime_metadata
 
 
-def _extract_function_calls(response: Any) -> List[Tuple[str, Dict[str, Any]]]:
-    calls: List[Tuple[str, Dict[str, Any]]] = []
-    candidate = (
-        response.candidates[0] if getattr(response, "candidates", None) else None
-    )
-    if not candidate or not getattr(candidate, "content", None):
+def _append_assistant_message(
+    conversation: List[Dict[str, Any]], response: Any
+) -> None:
+    """Append the assistant turn (including tool calls) to the conversation."""
+
+    if not getattr(response, "choices", None):
+        return
+
+    message = response.choices[0].message
+    entry: Dict[str, Any] = {
+        "role": "assistant",
+        "content": message.content or "",
+    }
+    if message.tool_calls:
+        entry["tool_calls"] = [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {
+                    "name": tc.function.name,
+                    "arguments": tc.function.arguments,
+                },
+            }
+            for tc in message.tool_calls
+        ]
+    conversation.append(entry)
+
+
+def _extract_function_calls(
+    response: Any,
+) -> List[Tuple[str, Dict[str, Any], str]]:
+    calls: List[Tuple[str, Dict[str, Any], str]] = []
+    if not getattr(response, "choices", None):
         return calls
 
-    for part in getattr(candidate.content, "parts", []) or []:
-        function_call = getattr(part, "function_call", None)
-        if not function_call:
-            continue
-        args = _normalise_args(function_call.args)
-        calls.append((function_call.name, args))
+    message = response.choices[0].message
+    if not message.tool_calls:
+        return calls
+
+    for tool_call in message.tool_calls:
+        args = _normalise_args(tool_call.function.arguments)
+        calls.append((tool_call.function.name, args, tool_call.id))
 
     return calls
 
 
 def _extract_response_text(response: Any) -> str:
-    texts: List[str] = []
-    for candidate in getattr(response, "candidates", []) or []:
-        content = getattr(candidate, "content", None)
-        if content is not None:
-            parts = getattr(content, "parts", None)
-            if parts:
-                for part in parts:
-                    part_text = getattr(part, "text", None)
-                    if part_text:
-                        texts.append(str(part_text))
-            else:
-                content_text = getattr(content, "text", None)
-                if content_text:
-                    texts.append(str(content_text))
+    if not getattr(response, "choices", None):
+        return ""
 
-        candidate_text = getattr(candidate, "text", None)
-        if candidate_text:
-            texts.append(str(candidate_text))
-
-    if not texts:
-        fallback_text = getattr(response, "text", None)
-        if fallback_text:
-            texts.append(str(fallback_text))
-
-    return "".join(texts).strip()
+    message = response.choices[0].message
+    content = getattr(message, "content", None)
+    if content:
+        return str(content).strip()
+    return ""
 
 
 def _summarize_empty_response(response: Any) -> str:
-    candidate_summaries: List[Dict[str, Any]] = []
-    for idx, candidate in enumerate(getattr(response, "candidates", []) or []):
-        finish_reason = getattr(candidate, "finish_reason", None)
-        safety_ratings = getattr(candidate, "safety_ratings", None)
-        blocked = False
-        if safety_ratings:
-            for rating in safety_ratings:
-                if getattr(rating, "blocked", False):
-                    blocked = True
-                    break
+    if not getattr(response, "choices", None):
+        return json.dumps({"choices": []})
 
-        part_types: List[str] = []
-        content = getattr(candidate, "content", None)
-        parts = getattr(content, "parts", None) if content else None
-        if parts:
-            for part in parts:
-                if getattr(part, "function_call", None):
-                    part_types.append("function_call")
-                elif getattr(part, "function_response", None):
-                    part_types.append("function_response")
-                else:
-                    part_types.append(type(part).__name__)
-
-        candidate_summaries.append(
-            {
-                "index": idx,
-                "finish_reason": str(finish_reason) if finish_reason else None,
-                "blocked": blocked,
-                "part_types": part_types,
-            }
-        )
-
-    prompt_feedback = getattr(response, "prompt_feedback", None)
-    block_reason = (
-        str(getattr(prompt_feedback, "block_reason", None))
-        if prompt_feedback
-        else None
-    )
-
+    choice = response.choices[0]
+    message = choice.message
     debug_payload = {
-        "candidates": candidate_summaries,
-        "prompt_block_reason": block_reason,
+        "finish_reason": getattr(choice, "finish_reason", None),
+        "has_tool_calls": bool(getattr(message, "tool_calls", None)),
+        "refusal": getattr(message, "refusal", None),
     }
 
     try:
@@ -855,18 +801,16 @@ def _summarize_empty_response(response: Any) -> str:
 
 
 def _derive_fallback_message(response: Any) -> str:
-    for candidate in getattr(response, "candidates", []) or []:
-        finish_reason = getattr(candidate, "finish_reason", None)
-        if finish_reason and str(finish_reason).upper() == "SAFETY":
-            return SAFETY_FALLBACK_RESPONSE
-        safety_ratings = getattr(candidate, "safety_ratings", None)
-        if safety_ratings:
-            for rating in safety_ratings:
-                if getattr(rating, "blocked", False):
-                    return SAFETY_FALLBACK_RESPONSE
+    if not getattr(response, "choices", None):
+        return DEFAULT_FALLBACK_RESPONSE
 
-    prompt_feedback = getattr(response, "prompt_feedback", None)
-    if prompt_feedback and getattr(prompt_feedback, "block_reason", None):
+    message = response.choices[0].message
+    finish_reason = getattr(response.choices[0], "finish_reason", None)
+    if finish_reason and str(finish_reason).lower() in {"content_filter", "safety"}:
+        return SAFETY_FALLBACK_RESPONSE
+
+    refusal = getattr(message, "refusal", None)
+    if refusal:
         return SAFETY_FALLBACK_RESPONSE
 
     return DEFAULT_FALLBACK_RESPONSE
@@ -883,11 +827,11 @@ async def _retry_once_if_empty(
     response: Any,
     model_used: str,
     *,
-    client: genai.Client,
     primary_model: str,
     fallback_model: Optional[str],
-    conversation: List[types.Content],
-    config: types.GenerateContentConfig,
+    conversation: List[Dict[str, Any]],
+    tools: Optional[List[Dict[str, Any]]],
+    temperature: float,
     estimated_tokens: int,
     context: str,
 ) -> Tuple[Any, str, bool]:
@@ -896,7 +840,7 @@ async def _retry_once_if_empty(
 
     debug_summary = _summarize_empty_response(response)
     print(
-        "⚠️  Gemini returned empty response (will retry once). "
+        "⚠️  Model returned empty response (will retry once). "
         f"Context: {context}. Summary: {debug_summary}"
     )
 
@@ -912,12 +856,12 @@ async def _retry_once_if_empty(
         )
 
     new_response, new_model_used = await _make_api_call_with_retry(
-        client,
         retry_model,
         conversation,
-        config,
-        estimated_tokens,
-        retry_context,
+        tools=tools,
+        temperature=temperature,
+        estimated_prompt_tokens=estimated_tokens,
+        context=retry_context,
     )
 
     return new_response, new_model_used, True
