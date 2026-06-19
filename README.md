@@ -105,6 +105,21 @@ TheCatalyst/
 └── data/                     # SQLite (gitignored)
 ```
 
+## Database backups
+
+On every `python app.py` start, the live SQLite file is copied to `data/backups/` (newest 5 kept).
+
+```bash
+python app.py backup                  # manual backup without starting servers
+python app.py restore --list          # list backups (newest first)
+python app.py restore --latest        # restore most recent backup
+python app.py restore --index 2       # restore by list index
+python app.py restore --file PATH     # restore a specific file
+python app.py restore --latest --yes  # skip confirmation
+```
+
+Stop the running server before restoring.
+
 ## Configuration
 
 ```bash

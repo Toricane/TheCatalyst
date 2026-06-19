@@ -10,7 +10,7 @@ import random
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from fastapi import HTTPException
 from sqlalchemy import func
@@ -22,7 +22,7 @@ from .config import (
     SHOW_THINKING,
     SYSTEM_PROMPT_PATH,
 )
-from .functions import catalyst_functions, create_tool_definitions
+from .functions import _strip_code_fences, apply_envelope_actions, catalyst_functions
 from .llm_client import acompletion, is_configured
 from .memory_manager import extract_section
 from .models import LTMProfile
@@ -41,6 +41,47 @@ SAFETY_FALLBACK_RESPONSE = (
     "I want to keep our momentum strong, but the model flagged the last request for "
     "safety reasons. Let's try reframing it or shifting to a different angle."
 )
+
+OutputMode = Literal["structured", "greeting", "plain"]
+
+STRUCTURED_OUTPUT_INSTRUCTIONS = """
+## Response Format (CRITICAL)
+
+Respond with a single JSON object only. No markdown fences, no text outside the JSON.
+
+Schema:
+{
+  "reply": "<user-facing message — always required>",
+  "daily_log": null OR {
+    "wins": "...", "challenges": "...", "gratitude": "...", "priorities": "...",
+    "energy_level": 1-10, "focus_rating": 1-10
+  },
+  "memory_update": null OR {
+    "should_update": true/false,
+    "summary_text": "<full updated LTM markdown profile with ## headings>"
+  },
+  "insights": null OR [
+    {"insight_type": "pattern|breakthrough|challenge", "description": "...", "importance_score": 1-5}
+  ]
+}
+
+Rules:
+- "reply" is the only text the user sees. Always include it.
+- Include daily_log only during evening sessions when the user shared reflection content.
+- Include memory_update when meaningful profile changes emerged (typically evening). Set should_update false otherwise.
+- Include insights only for notable patterns or breakthroughs worth storing long-term.
+- Session tracking is handled server-side — never include it in the JSON.
+- When updating memory, maintain sections: Overview & North Star, Key Patterns, Recurring Challenges,
+  Breakthroughs & Wins, Personality Traits, Current State & Momentum (use ## headings).
+"""
+
+GREETING_OUTPUT_INSTRUCTIONS = """
+## Response Format
+
+Respond with plain text only — a warm, concise greeting. Do NOT use JSON. Do NOT describe database actions.
+"""
+
+_api_request_log_count = 0
 
 def _is_retryable_error(error: Exception) -> bool:
     """Check if an error is retryable (503 overload / connection errors)."""
@@ -149,8 +190,10 @@ async def _make_api_call_with_retry(
     temperature: float = 0.7,
     estimated_prompt_tokens: int,
     context: str = "initial",
+    response_format: Optional[Dict[str, str]] = None,
 ) -> Tuple[Any, str]:
     """Make API call with retry logic, rate limiting, and model fallback."""
+    global _api_request_log_count
     last_error = None
     primary_model = model
     fallback_model = ALT_MODEL_NAME if ALT_MODEL_NAME != primary_model else None
@@ -212,6 +255,13 @@ async def _make_api_call_with_retry(
                 messages=messages,
                 tools=tools,
                 temperature=temperature,
+                response_format=response_format,
+            )
+
+            _api_request_log_count += 1
+            print(
+                f"📡 API request #{_api_request_log_count} "
+                f"context={context} model={current_model}"
             )
 
             if attempt > 0:
@@ -284,19 +334,14 @@ async def generate_catalyst_response(
     context: Dict[str, Any],
     *,
     primary_model: str = MODEL_NAME,
+    output_mode: OutputMode = "structured",
 ) -> Dict[str, Any]:
-    """Generate a response from the Catalyst AI agent."""
+    """Generate a response from the Catalyst AI agent (single API request per call)."""
     if not is_configured():
         raise HTTPException(
             status_code=500,
             detail="AI client not configured; missing CLOD_API_KEY",
         )
-
-    fallback_model = (
-        ALT_MODEL_NAME
-        if ALT_MODEL_NAME and ALT_MODEL_NAME != primary_model
-        else None
-    )
 
     base_prompt_text, base_metadata = _load_base_prompt()
     prompt_timestamp = local_now()
@@ -305,111 +350,73 @@ async def generate_catalyst_response(
         context,
         base_prompt=base_prompt_text,
         generated_at=prompt_timestamp,
+        output_mode=output_mode,
     )
     try:
         context_snapshot = json.loads(json.dumps(context, default=str))
     except TypeError:  # pragma: no cover - fallback for unexpected types
         context_snapshot = context
 
-    try:
-        tools = create_tool_definitions()
-    except Exception as exc:  # pragma: no cover - defensive
-        print(f"⚠️  Function calling disabled due to error: {exc}")
-        tools = None
-
     conversation: List[Dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": message},
     ]
-    executed_calls: List[Dict[str, Any]] = []
     temperature = 0.7
-
     estimated_tokens = estimate_tokens(system_prompt, message)
+
+    response_format: Optional[Dict[str, str]] = None
+    if output_mode == "structured" and primary_model.startswith("gemini-"):
+        response_format = {"type": "json_object"}
 
     response, current_model_used = await _make_api_call_with_retry(
         primary_model,
         conversation,
-        tools=tools,
+        tools=None,
         temperature=temperature,
         estimated_prompt_tokens=estimated_tokens,
-        context="initial",
+        context=output_mode,
+        response_format=response_format,
     )
 
-    response, current_model_used, _ = await _retry_once_if_empty(
-        response,
-        current_model_used,
-        primary_model=primary_model,
-        fallback_model=fallback_model,
-        conversation=conversation,
-        tools=tools,
-        temperature=temperature,
-        estimated_tokens=estimated_tokens,
-        context="initial",
-    )
+    raw_text = _extract_response_text(response)
+    executed_calls: List[Dict[str, Any]] = []
+    memory_updated = False
 
-    for _ in range(3):
-        pending_calls = _extract_function_calls(response)
-        if not pending_calls:
-            break
-
-        _append_assistant_message(conversation, response)
-
-        for name, args, tool_call_id in pending_calls:
-            result_payload, call_record = _execute_tool(name, args)
-            executed_calls.append(call_record)
-            conversation.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": json.dumps(result_payload),
-                }
+    if output_mode == "structured":
+        response_text, envelope = _parse_structured_envelope(raw_text)
+        if not response_text:
+            response_text = _derive_fallback_message(response)
+        else:
+            executed_calls, memory_updated = apply_envelope_actions(envelope)
+    else:
+        response_text = raw_text
+        if not response_text:
+            debug_summary = _summarize_empty_response(response)
+            print(
+                "⚠️  Model returned empty response for catalyst reply. "
+                f"Summary: {debug_summary}"
             )
+            response_text = (
+                _greeting_fallback(context, session_type)
+                if output_mode == "greeting"
+                else _derive_fallback_message(response)
+            )
+            await rate_limiter.record_usage(current_model_used, 0)
+        else:
+            actual_tokens = estimate_tokens(response_text)
+            await rate_limiter.record_usage(current_model_used, actual_tokens)
 
-        response, current_model_used = await _make_api_call_with_retry(
-            primary_model,
-            conversation,
-            tools=tools,
-            temperature=temperature,
-            estimated_prompt_tokens=0,
-            context="follow-up",
-        )
-
-        response, current_model_used, _ = await _retry_once_if_empty(
-            response,
-            current_model_used,
-            primary_model=primary_model,
-            fallback_model=fallback_model,
-            conversation=conversation,
-            tools=tools,
-            temperature=temperature,
-            estimated_tokens=0,
-            context="follow-up",
-        )
-    else:
-        raise HTTPException(
-            status_code=500,
-            detail="AI produced repeated tool calls without a final response.",
-        )
-
-    response_text = _extract_response_text(response)
-    if not response_text:
-        await rate_limiter.record_usage(current_model_used, 0)
-        debug_summary = _summarize_empty_response(response)
-        print(
-            "⚠️  Model returned empty response for catalyst reply. "
-            f"Summary: {debug_summary}"
-        )
-        response_text = _derive_fallback_message(response)
-    else:
+    if output_mode == "structured" and response_text:
         actual_tokens = estimate_tokens(response_text)
         await rate_limiter.record_usage(current_model_used, actual_tokens)
 
-    result = _parse_model_response(
-        response,
-        executed_calls,
-        model_used=current_model_used,
-        response_text=response_text,
-    )
+    result = {
+        "response": response_text,
+        "memory_updated": memory_updated,
+        "function_calls": executed_calls,
+        "thinking": json.dumps(executed_calls) if SHOW_THINKING else None,
+        "model": current_model_used,
+    }
 
     result["system_prompt"] = system_prompt
     result["context_snapshot"] = context_snapshot
@@ -618,6 +625,7 @@ def _build_system_prompt(
     *,
     base_prompt: Optional[str] = None,
     generated_at: Optional[datetime] = None,
+    output_mode: OutputMode = "structured",
 ) -> str:
     if base_prompt is None:
         base_prompt, _ = _load_base_prompt()
@@ -689,7 +697,43 @@ def _build_system_prompt(
         f"- Missed Sessions: {context.get('missed_sessions', [])}\n\n"
         f"## Session-Specific Instructions:\n\n{get_session_instructions(session_type)}\n"
     )
+
+    if output_mode == "structured":
+        prompt += f"\n{STRUCTURED_OUTPUT_INSTRUCTIONS}\n"
+    elif output_mode == "greeting":
+        prompt += f"\n{GREETING_OUTPUT_INSTRUCTIONS}\n"
+
     return prompt
+
+
+def _parse_structured_envelope(raw_text: str) -> Tuple[str, Dict[str, Any]]:
+    """Parse a structured JSON response; fall back to plain text as reply."""
+    text = _strip_code_fences(raw_text)
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict):
+            reply = (data.get("reply") or "").strip()
+            return reply or raw_text.strip(), data
+    except json.JSONDecodeError:
+        pass
+    stripped = raw_text.strip()
+    return stripped, {"reply": stripped}
+
+
+def _greeting_fallback(context: Dict[str, Any], session_type: SessionType) -> str:
+    goals = context.get("goals") or []
+    goal_text = goals[0].get("description", "your North Star") if goals else "your North Star"
+    hour = local_now().hour
+    if 4 <= hour < 12:
+        period = "morning"
+    elif hour >= 20 or hour < 4:
+        period = "evening"
+    else:
+        period = "day"
+    return (
+        f"Good {period}. Your North Star: {goal_text}. "
+        "What's the one move that matters most right now?"
+    )
 
 
 def _parse_reference_timestamp(value: Optional[str]) -> Optional[datetime]:

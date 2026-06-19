@@ -9,14 +9,12 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..catalyst_ai import (
-    _extract_function_calls,
     _extract_response_text,
     _make_api_call_with_retry,
     get_session_instructions,
 )
 from ..config import MODEL_NAME
 from ..dependencies import get_db
-from ..functions import create_tool_definitions
 from ..llm_client import is_configured
 from ..rate_limiter import estimate_tokens, rate_limiter
 from ..schemas import SessionType
@@ -45,7 +43,7 @@ async def health_check(db: Session = Depends(get_db)) -> Dict[str, Any]:
             "database": "connected",
             "goals_count": goal_count,
             "memory_profiles": memory_count,
-            "function_calling": "enabled",
+            "function_calling": "structured_json",
             "ai_model": MODEL_NAME,
             "rate_limits": {
                 model: limits for model, limits in rate_limiter._limits.items()
@@ -61,12 +59,16 @@ async def test_function_calling() -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail="CLOD API key not configured")
 
     try:
-        tools = create_tool_definitions()
-        test_message = "Please update my session tracking for a morning session."
+        test_message = (
+            'Respond with JSON: {"reply": "Test ok", "daily_log": null, '
+            '"memory_update": null, "insights": null}'
+        )
         messages = [
             {
                 "role": "system",
-                "content": "You are a helpful assistant. If appropriate, use the available functions.",
+                "content": (
+                    "You are a test assistant. Respond with valid JSON only."
+                ),
             },
             {"role": "user", "content": test_message},
         ]
@@ -75,7 +77,6 @@ async def test_function_calling() -> Dict[str, Any]:
         response, model_used = await _make_api_call_with_retry(
             MODEL_NAME,
             messages,
-            tools=tools,
             temperature=0.3,
             estimated_prompt_tokens=estimated,
             context="test",
@@ -83,19 +84,12 @@ async def test_function_calling() -> Dict[str, Any]:
         response_text = _extract_response_text(response)
         await rate_limiter.record_usage(model_used, estimate_tokens(response_text))
 
-        function_calls = [
-            {"name": name, "args": args}
-            for name, args, _tool_call_id in _extract_function_calls(response)
-        ]
-
         return {
             "status": "success",
-            "function_declarations_created": len(tools),
-            "function_names": [t["function"]["name"] for t in tools],
+            "transport": "structured_json",
             "test_response": {
-                "function_calls": function_calls,
                 "text_response": response_text,
-                "has_function_call": bool(function_calls),
+                "has_json": response_text.strip().startswith("{"),
             },
         }
     except Exception as exc:  # pragma: no cover

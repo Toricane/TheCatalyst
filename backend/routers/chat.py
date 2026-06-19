@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from .. import models
-from ..catalyst_ai import generate_catalyst_response, update_ltm_memory
+from ..catalyst_ai import generate_catalyst_response
 from ..config import SHOW_THINKING
 from ..conversation import (
     RECENT_CONVERSATION_CHAR_LIMIT,
@@ -21,7 +21,6 @@ from ..conversation import (
     parse_iso_timestamp,
     serialize_goal_record,
 )
-from ..database import get_session
 from ..dependencies import get_db
 from ..functions import update_session_tracking
 from ..memory_manager import (
@@ -108,6 +107,7 @@ async def initialize_catalyst(
         goal_prompt,
         SessionType.INITIALIZATION,
         context,
+        output_mode="plain",
     )
 
     conversation_id = str(uuid4())
@@ -359,6 +359,7 @@ Current context:
         greeting_prompt,
         session_type,
         context,
+        output_mode="greeting",
     )
 
     conversation_id = str(uuid4())
@@ -721,16 +722,6 @@ async def chat_with_catalyst(
         log.evening_reflection = message.message
 
     db.commit()
-
-    if actual_session == SessionType.EVENING:
-        with get_session() as memory_session:
-            updated = await update_ltm_memory(
-                message.message,
-                response["response"],
-                context,
-                memory_session,
-            )
-            memory_updated = memory_updated or updated
 
     return ChatResponse(
         response=response["response"],

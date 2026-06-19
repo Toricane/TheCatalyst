@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import threading
 import time
@@ -14,6 +15,7 @@ from pathlib import Path
 import uvicorn
 
 from backend.app import app
+from backend.db_backup import backup_on_startup, run_backup_cli, run_restore_cli
 
 __all__ = ["app"]
 
@@ -77,6 +79,8 @@ def _open_frontend_when_backend_ready(stop_event: threading.Event) -> None:
 
 
 def main() -> None:
+    backup_on_startup()
+
     frontend_server: ThreadingHTTPServer | None = None
     frontend_thread: threading.Thread | None = None
     backend_ready_thread: threading.Thread | None = None
@@ -120,5 +124,28 @@ def main() -> None:
         print("✨ All services stopped.")
 
 
+def _build_cli_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="The Catalyst — local dev server and database tools."
+    )
+    subparsers = parser.add_subparsers(dest="command")
+
+    subparsers.add_parser("backup", help="Create a database backup without starting the app.")
+    subparsers.add_parser(
+        "restore",
+        help="Restore database from backup (pass --list, --latest, --index, or --file).",
+    )
+
+    return parser
+
+
 if __name__ == "__main__":
+    parser = _build_cli_parser()
+    args, remaining = parser.parse_known_args()
+
+    if args.command == "backup":
+        raise SystemExit(run_backup_cli(remaining))
+    if args.command == "restore":
+        raise SystemExit(run_restore_cli(remaining))
+
     main()

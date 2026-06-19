@@ -85,18 +85,22 @@ During the **Evening Reflection** ritual, the agent triggers a synthesis step:
 
 ---
 
-## 3. Function & Tool Calling System
+## 3. Structured Response Envelope (Single-Request Actions)
 
-The agent calls structured Python functions via LiteLLM tool calling (OpenAI-format schemas).
+Each chat turn uses **one** LiteLLM request. The model returns a JSON envelope; Python parses it and applies side effects via [backend/functions.py](backend/functions.py) (`apply_envelope_actions`).
 
-The following tools are defined in [backend/functions.py](backend/functions.py) and registered with the model:
+| Envelope field | Purpose |
+| :--- | :--- |
+| `reply` | User-facing message (always required) |
+| `daily_log` | `{wins, challenges, gratitude, priorities, energy_level, focus_rating}` → `daily_logs` table |
+| `memory_update` | `{should_update, summary_text}` → `ltm_profile` table (evening synthesis folded into the turn) |
+| `insights` | `[{insight_type, description, importance_score}]` → `insights` table |
 
-| Tool Name | Parameters | Purpose |
-| :--- | :--- | :--- |
-| `log_daily_reflection` | `wins`, `challenges`, `gratitude`, `next_day_priorities` | Records a structured summary of the user's day in the SQLite `daily_logs` table. |
-| `update_ltm_profile` | `new_summary_text` | Re-writes the LTM summary string in the SQLite database. |
-| `extract_insights` | `insight_type`, `description`, `trigger_context` | Extracts major breakthroughs or long-term behavioral patterns. |
-| `update_session_tracking`| `session_type`, `completed_at` | Marks a ritual (Morning/Evening) as done, updating streaks. |
+**Greeting mode** (`POST /initial-greeting`): plain text only, no JSON envelope, exactly **1 request** (no tools, no empty-retry).
+
+**Session tracking** (`update_session_tracking`, streaks, daily_log completion flags) runs in Python inside [backend/routers/chat.py](backend/routers/chat.py) — not in the model envelope.
+
+Orchestration lives in [backend/catalyst_ai.py](backend/catalyst_ai.py) (`generate_catalyst_response`, `output_mode`: `structured` | `greeting` | `plain`).
 
 ---
 
@@ -116,7 +120,7 @@ If the API returns a 503 "model overloaded" or "unavailable" error, the agent in
 $$\text{delay} = \min(\text{base\_delay} \times 2^{\text{attempt}}, \text{max\_delay}) \pm \text{jitter}$$
 
 ### Model Fallback
-If the primary model (`GPT OSS 120B` via CLOD) remains overloaded or rate-limited after several attempts, the backend automatically falls back to `gemini-2.5-flash` (via LiteLLM) to execute the conversation and tool calls.
+If the primary model (`GPT OSS 120B` via CLOD) remains overloaded or rate-limited after several attempts, the backend automatically falls back to `gemini-2.5-flash` (via LiteLLM) for the same single-request turn.
 
 ---
 
@@ -125,7 +129,7 @@ If the primary model (`GPT OSS 120B` via CLOD) remains overloaded or rate-limite
 To prevent this architecture document from becoming stale as the product grows, coding agents must follow these rules:
 
 * **When to Update This File**:
-  - Whenever you add, rename, or deprecate a Python function registered as an LLM tool.
+  - Whenever you add, rename, or change envelope fields or action handlers in `apply_envelope_actions`.
   - If you change the priority, keys, or tone triggers of the Catalyst's Mindset Stack.
   - If you configure a different default model or modify the CLOD/Gemini fallback priority.
   - If you modify the database schema affecting SQLite tables (`models.py`) or the LTM synthesis cycle.

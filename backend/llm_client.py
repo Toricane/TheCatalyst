@@ -51,6 +51,7 @@ async def acompletion(
     messages: List[Dict[str, Any]],
     tools: Optional[List[Dict[str, Any]]] = None,
     temperature: float = 0.7,
+    response_format: Optional[Dict[str, str]] = None,
 ) -> Any:
     """Run an async chat completion via LiteLLM."""
 
@@ -62,4 +63,6 @@ async def acompletion(
     }
     if tools:
         kwargs["tools"] = tools
+    if response_format:
+        kwargs["response_format"] = response_format
     return await litellm.acompletion(**kwargs)

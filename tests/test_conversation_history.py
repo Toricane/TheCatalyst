@@ -3,7 +3,7 @@ import os
 import uuid
 from contextlib import contextmanager
 
-os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 
 from fastapi.testclient import (
     TestClient,  # noqa: E402  pylint: disable=wrong-import-position

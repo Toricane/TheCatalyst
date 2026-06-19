@@ -391,3 +391,75 @@ def create_function_definitions() -> List[Dict[str, Any]]:
     """Backwards-compatible alias for create_tool_definitions."""
 
     return create_tool_definitions()
+
+
+def apply_envelope_actions(
+    envelope: Dict[str, Any],
+) -> tuple[List[Dict[str, Any]], bool]:
+    """Apply structured JSON envelope side effects. Returns (action_records, memory_updated)."""
+
+    executed: List[Dict[str, Any]] = []
+    memory_updated = False
+
+    daily_log = envelope.get("daily_log")
+    if isinstance(daily_log, dict):
+        wins = (daily_log.get("wins") or "").strip()
+        challenges = (daily_log.get("challenges") or "").strip()
+        gratitude = (daily_log.get("gratitude") or "").strip()
+        priorities = (daily_log.get("priorities") or "").strip()
+        if any((wins, challenges, gratitude, priorities)):
+            args = {
+                "wins": wins,
+                "challenges": challenges,
+                "gratitude": gratitude,
+                "priorities": priorities,
+                "energy_level": int(daily_log.get("energy_level") or 5),
+                "focus_rating": int(daily_log.get("focus_rating") or 5),
+            }
+            result = log_daily_reflection(**args)
+            executed.append(
+                {"function": "log_daily_reflection", "args": args, "result": result}
+            )
+
+    memory_update = envelope.get("memory_update")
+    if isinstance(memory_update, dict) and memory_update.get("should_update"):
+        summary_text = (memory_update.get("summary_text") or "").strip()
+        if summary_text:
+            args = {"summary_text": summary_text}
+            result = update_ltm_profile_function(**args)
+            executed.append(
+                {"function": "update_ltm_profile", "args": args, "result": result}
+            )
+            memory_updated = True
+
+    insights = envelope.get("insights")
+    if isinstance(insights, list):
+        for item in insights:
+            if not isinstance(item, dict):
+                continue
+            description = (item.get("description") or "").strip()
+            if not description:
+                continue
+            insight_type = (item.get("insight_type") or "general").strip()
+            importance_score = int(item.get("importance_score") or 3)
+            with get_session() as session:
+                session.add(
+                    Insight(
+                        insight_type=insight_type,
+                        category="conversation",
+                        description=description,
+                        importance_score=importance_score,
+                    )
+                )
+            record = {
+                "function": "extract_insights",
+                "args": {
+                    "description": description,
+                    "insight_type": insight_type,
+                    "importance_score": importance_score,
+                },
+                "result": {"status": "success"},
+            }
+            executed.append(record)
+
+    return executed, memory_updated
