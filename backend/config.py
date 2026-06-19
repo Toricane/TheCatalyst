@@ -69,3 +69,7 @@ CATCH_UP_THRESHOLD_HOURS: Final[int] = int(os.getenv("CATCH_UP_THRESHOLD", 36))
 # Prompt files
 PROMPTS_DIR: Final[Path] = BASE_DIR / "prompts"
 SYSTEM_PROMPT_PATH: Final[Path] = PROMPTS_DIR / "system_prompt.md"
+
+# Context serialization — toon (default) or markdown for A/B rollback
+CONTEXT_FORMAT: Final[str] = os.getenv("CONTEXT_FORMAT", "toon").lower()
+ENVELOPE_FORMAT: Final[str] = os.getenv("ENVELOPE_FORMAT", "toon").lower()

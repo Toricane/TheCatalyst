@@ -75,7 +75,7 @@ graph TD
 ### Tier 2: Long-Term Memory (LTM)
 * Stored in the SQLite database under `ltm_profile` table (columns: `id`, `summary_text`, `last_updated`).
 * Contains an AI-curated summary of the user's personality traits, recurring challenges, key patterns, and motivations.
-* The LTM profile text is injected into the system prompt on every message request via LiteLLM.
+* The LTM profile `full_text` is injected **once** into the system prompt (section columns are not duplicated). Serialization lives in [backend/context_serializer.py](backend/context_serializer.py).
 
 ### The End-of-Session Synthesis
 During the **Evening Reflection** ritual, the agent triggers a synthesis step:
@@ -87,7 +87,7 @@ During the **Evening Reflection** ritual, the agent triggers a synthesis step:
 
 ## 3. Structured Response Envelope (Single-Request Actions)
 
-Each chat turn uses **one** LiteLLM request. The model returns a JSON envelope; Python parses it and applies side effects via [backend/functions.py](backend/functions.py) (`apply_envelope_actions`).
+Each chat turn uses **one** LiteLLM request. The model returns a **TOON** envelope by default (JSON fallback supported); Python parses it via [backend/envelope_codec.py](backend/envelope_codec.py) and applies side effects via [backend/functions.py](backend/functions.py) (`apply_envelope_actions`).
 
 | Envelope field | Purpose |
 | :--- | :--- |
@@ -96,7 +96,9 @@ Each chat turn uses **one** LiteLLM request. The model returns a JSON envelope; 
 | `memory_update` | `{should_update, summary_text}` → `ltm_profile` table (evening synthesis folded into the turn) |
 | `insights` | `[{insight_type, description, importance_score}]` → `insights` table |
 
-**Greeting mode** (`POST /initial-greeting`): plain text only, no JSON envelope, exactly **1 request** (no tools, no empty-retry).
+**Context serialization** — goals, insights, and session meta are encoded as TOON tabular blocks in [backend/context_serializer.py](backend/context_serializer.py). LTM prose stays markdown. Env toggles: `CONTEXT_FORMAT` (`toon` \| `markdown`), `ENVELOPE_FORMAT` (`toon` \| `json`). `system_prompt_reference` stores `context_format`, `context_chars`, and `estimated_context_tokens` for debug UI.
+
+**Greeting mode** (`POST /initial-greeting`): plain text only, no envelope, exactly **1 request** (no tools, no empty-retry).
 
 **Session tracking** (`update_session_tracking`, streaks, daily_log completion flags) runs in Python inside [backend/routers/chat.py](backend/routers/chat.py) — not in the model envelope.
 
@@ -130,6 +132,7 @@ To prevent this architecture document from becoming stale as the product grows, 
 
 * **When to Update This File**:
   - Whenever you add, rename, or change envelope fields or action handlers in `apply_envelope_actions`.
+  - When you change context serialization (`context_serializer.py`) or envelope parsing (`envelope_codec.py`).
   - If you change the priority, keys, or tone triggers of the Catalyst's Mindset Stack.
   - If you configure a different default model or modify the CLOD/Gemini fallback priority.
   - If you modify the database schema affecting SQLite tables (`models.py`) or the LTM synthesis cycle.

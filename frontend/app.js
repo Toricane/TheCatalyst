@@ -9,6 +9,128 @@ function renderMarkdown(text = "") {
     return DOMPurify.sanitize(parsed);
 }
 
+const TOON_HEADER_PATTERN = /^\w[\w.]*\[\d+\]\{[^}]+\}:$/;
+const TOON_KV_PATTERN = /^(session|date|missed):/;
+
+function wrapInlineToonBlocks(text = "") {
+    const lines = String(text ?? "").split("\n");
+    const output = [];
+    let index = 0;
+
+    while (index < lines.length) {
+        const line = lines[index];
+        const trimmed = line.trim();
+
+        if (TOON_HEADER_PATTERN.test(trimmed)) {
+            const block = [line];
+            index += 1;
+            while (
+                index < lines.length &&
+                (/^  \S/.test(lines[index]) || lines[index].trim() === "")
+            ) {
+                if (lines[index].trim()) {
+                    block.push(lines[index]);
+                }
+                index += 1;
+            }
+            output.push("```toon", ...block, "```");
+            continue;
+        }
+
+        if (TOON_KV_PATTERN.test(trimmed)) {
+            const block = [];
+            while (
+                index < lines.length &&
+                TOON_KV_PATTERN.test(lines[index].trim())
+            ) {
+                block.push(lines[index]);
+                index += 1;
+            }
+            output.push("```toon", ...block, "```");
+            continue;
+        }
+
+        output.push(line);
+        index += 1;
+    }
+
+    return output.join("\n");
+}
+
+function extractContextStats(reference) {
+    if (!reference || typeof reference !== "object") {
+        return null;
+    }
+
+    const stats = {};
+    if (reference.context_format) {
+        stats.format = reference.context_format;
+    }
+    if (reference.context_chars != null) {
+        stats.chars = reference.context_chars;
+    }
+    if (reference.estimated_context_tokens != null) {
+        stats.tokens = reference.estimated_context_tokens;
+    }
+    if (reference.session_type) {
+        stats.session = reference.session_type;
+    }
+    if (reference.generated_at) {
+        stats.generatedAt = reference.generated_at;
+    }
+    return Object.keys(stats).length > 0 ? stats : null;
+}
+
+function formatContextStatsSummary(stats, checksumMatch = null) {
+    if (!stats && checksumMatch === null) {
+        return "";
+    }
+
+    const parts = [];
+    if (stats?.format) {
+        parts.push(`Format: ${stats.format}`);
+    }
+    if (stats?.tokens != null) {
+        parts.push(`~${stats.tokens} context tokens`);
+    }
+    if (stats?.chars != null) {
+        parts.push(`${stats.chars} context chars`);
+    }
+    if (stats?.session) {
+        parts.push(`Session: ${stats.session}`);
+    }
+    if (checksumMatch === true) {
+        parts.push("Base prompt checksum: match");
+    } else if (checksumMatch === false) {
+        parts.push("Base prompt checksum: drifted");
+    }
+    return parts.join(" • ");
+}
+
+function formatDebugContent(text, options = {}) {
+    const { preferCodeBlock = false, wrapToon = false } = options;
+    let rawText = String(text ?? "");
+    const trimmed = rawText.trim();
+
+    if (!trimmed) {
+        return "_No details were captured for this section._";
+    }
+
+    if (wrapToon && (rawText.includes("goals[") || rawText.includes("insights["))) {
+        rawText = wrapInlineToonBlocks(rawText);
+    }
+
+    if (
+        preferCodeBlock &&
+        !rawText.includes("```") &&
+        /^[\[{]/.test(trimmed)
+    ) {
+        return `\`\`\`json\n${rawText}\n\`\`\``;
+    }
+
+    return rawText;
+}
+
 const API_BASE_URL = (() => {
     const { origin } = window.location;
     return origin.includes("localhost") || origin.includes("127.0.0.1")
@@ -254,7 +376,7 @@ function normalizeDebugInfo(raw) {
         return true;
     })();
 
-    if (!hasPrompt && !hasContext && !hasReference) {
+    if (!hasPrompt && !hasContext && !hasReference && !hasSystemPromptReference) {
         return null;
     }
 
@@ -263,6 +385,11 @@ function normalizeDebugInfo(raw) {
         contextSnapshot,
         contextReference,
         systemPromptReference,
+        contextStats: extractContextStats(
+            typeof systemPromptReference === "object"
+                ? systemPromptReference
+                : null
+        ),
         conversationId,
         messageId,
     };
@@ -1162,8 +1289,8 @@ async function openSystemContextModal(debugInfo) {
     const shouldFetchRemote =
         conversationId &&
         messageId &&
-        ((hasValue(contextReference) && !hasValue(contextData)) ||
-            (hasValue(systemPromptReference) && !hasValue(systemPromptText)));
+        ((!hasValue(systemPromptText) || !hasValue(contextData)) &&
+            (hasValue(contextReference) || hasValue(systemPromptReference)));
 
     if (shouldFetchRemote) {
         try {
@@ -1243,27 +1370,21 @@ async function openSystemContextModal(debugInfo) {
         }
     };
 
-    const formatMarkdown = (value, { preferCodeBlock = false } = {}) => {
-        const rawText = String(value ?? "");
-        const trimmed = rawText.trim();
-        if (!trimmed) {
-            return "_No details were captured for this section._";
-        }
-        if (
-            preferCodeBlock &&
-            !rawText.includes("```") &&
-            /^[\[{]/.test(trimmed)
-        ) {
-            return `\`\`\`json\n${rawText}\n\`\`\``;
-        }
-        return rawText;
-    };
+    const contextStats =
+        extractContextStats(systemPromptReference) ||
+        debugInfo?.contextStats ||
+        null;
+    const statsSummary = formatContextStatsSummary(
+        contextStats,
+        systemPromptChecksumMatch
+    );
 
     if (debugInfo && typeof debugInfo === "object") {
         debugInfo.systemPrompt = systemPromptText;
         debugInfo.contextSnapshot = contextData;
         debugInfo.contextReference = contextReference;
         debugInfo.systemPromptReference = systemPromptReference;
+        debugInfo.contextStats = contextStats;
     }
 
     const promptText = hasPrompt
@@ -1293,6 +1414,9 @@ async function openSystemContextModal(debugInfo) {
     })();
 
     const clipboardSections = [];
+    if (statsSummary) {
+        clipboardSections.push(`=== Context Stats ===\n${statsSummary}`);
+    }
     if (hasPrompt) {
         clipboardSections.push(
             "=== System Instructions ===\n".concat(
@@ -1302,7 +1426,9 @@ async function openSystemContextModal(debugInfo) {
     }
     if (hasContext) {
         clipboardSections.push(
-            "=== Context Snapshot ===\n".concat(normalizeToString(contextData))
+            "=== Context Snapshot (raw — not sent to model) ===\n".concat(
+                normalizeToString(contextData)
+            )
         );
     }
     if (hasContextReference) {
@@ -1342,18 +1468,34 @@ async function openSystemContextModal(debugInfo) {
 
         const body = document.createElement("div");
         body.className = "debug-markdown";
-        body.innerHTML = renderMarkdown(formatMarkdown(text, options));
+        body.innerHTML = renderMarkdown(formatDebugContent(text, options));
         wrapper.appendChild(body);
 
         return wrapper;
     };
 
     systemContextContent.innerHTML = "";
+
+    if (statsSummary) {
+        const statsBanner = document.createElement("div");
+        statsBanner.className = "debug-stats";
+        statsBanner.textContent = statsSummary;
+        systemContextContent.appendChild(statsBanner);
+    }
+
     systemContextContent.appendChild(
-        makeSection("System Instructions", promptText)
+        makeSection(
+            "System Instructions (sent to the model)",
+            promptText,
+            { wrapToon: true }
+        )
     );
     systemContextContent.appendChild(
-        makeSection("Context Snapshot", contextText, { preferCodeBlock: true })
+        makeSection(
+            "Context Snapshot (raw data — not sent to the model)",
+            contextText,
+            { preferCodeBlock: true }
+        )
     );
     systemContextContent.appendChild(
         makeSection("Context Reference", contextReferenceText, {

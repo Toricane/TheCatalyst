@@ -36,6 +36,16 @@ from ..time_utils import local_now, local_today, to_local, utc_now
 router = APIRouter()
 
 
+def _persisted_debug_fields(response: Dict[str, Any]) -> Dict[str, Any]:
+    """Fields stored on conversation rows for the system-context debug UI."""
+
+    return {
+        "system_prompt": response.get("system_prompt"),
+        "context_snapshot": response.get("context_snapshot"),
+        "system_prompt_reference": response.get("system_prompt_reference"),
+    }
+
+
 @router.post("/initialize", response_model=ChatResponse)
 async def initialize_catalyst(
     goal: Goal, db: Session = Depends(get_db)
@@ -133,8 +143,8 @@ async def initialize_catalyst(
                 "model": response.get("model"),
                 "conversation_id": conversation_id,
                 "is_conversation_start": True,
-                "system_prompt_reference": response.get("system_prompt_reference"),
                 "context_reference": context_reference,
+                **_persisted_debug_fields(response),
             }
         ),
         thinking_log=response.get("thinking") or "",
@@ -378,8 +388,8 @@ Current context:
                 "initial_greeting": True,
                 "conversation_id": conversation_id,
                 "is_conversation_start": True,
-                "system_prompt_reference": response.get("system_prompt_reference"),
                 "context_reference": context_reference,
+                **_persisted_debug_fields(response),
             }
         ),
         thinking_log=response.get("thinking") or "",
@@ -658,10 +668,16 @@ async def chat_with_catalyst(
                         "initial_greeting": True,
                         "conversation_id": greeting_conversation_id,
                         "is_conversation_start": True,
+                        "context_reference": greeting_reference,
+                        "system_prompt": getattr(
+                            greeting_payload, "system_prompt", None
+                        ),
+                        "context_snapshot": getattr(
+                            greeting_payload, "context_snapshot", None
+                        ),
                         "system_prompt_reference": getattr(
                             greeting_payload, "system_prompt_reference", None
                         ),
-                        "context_reference": greeting_reference,
                     }
                 ),
                 thinking_log="",
@@ -684,8 +700,8 @@ async def chat_with_catalyst(
                 "model": response.get("model"),
                 "conversation_id": conversation_id,
                 "is_conversation_start": created_new_conversation,
-                "system_prompt_reference": response.get("system_prompt_reference"),
                 "context_reference": context_reference,
+                **_persisted_debug_fields(response),
             }
         ),
         thinking_log=response.get("thinking") or "",

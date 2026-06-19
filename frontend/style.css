@@ -1075,6 +1075,25 @@ body::before {
     scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
 }
 
+.debug-stats {
+    margin-bottom: 0.75rem;
+    padding: 0.65rem 0.85rem;
+    border-radius: 0.75rem;
+    background: rgba(255, 140, 66, 0.12);
+    border: 1px solid rgba(255, 140, 66, 0.28);
+    color: rgba(255, 230, 210, 0.95);
+    font-size: 0.82rem;
+    line-height: 1.5;
+}
+
+.modal-card.debug-card .modal-subtitle {
+    margin: 0.35rem 0 0;
+    color: rgba(255, 255, 255, 0.62);
+    font-size: 0.88rem;
+    line-height: 1.45;
+    max-width: 38rem;
+}
+
 .debug-content::-webkit-scrollbar {
     width: 8px;
 }

@@ -18,11 +18,18 @@ from sqlalchemy.orm import Session
 
 from .config import (
     ALT_MODEL_NAME,
+    ENVELOPE_FORMAT,
     MODEL_NAME,
     SHOW_THINKING,
     SYSTEM_PROMPT_PATH,
 )
-from .functions import _strip_code_fences, apply_envelope_actions, catalyst_functions
+from .context_serializer import build_context_block, context_format_metadata
+from .envelope_codec import (
+    GREETING_OUTPUT_INSTRUCTIONS,
+    format_output_instructions,
+    parse_envelope,
+)
+from .functions import apply_envelope_actions, catalyst_functions
 from .llm_client import acompletion, is_configured
 from .memory_manager import extract_section
 from .models import LTMProfile
@@ -44,42 +51,8 @@ SAFETY_FALLBACK_RESPONSE = (
 
 OutputMode = Literal["structured", "greeting", "plain"]
 
-STRUCTURED_OUTPUT_INSTRUCTIONS = """
-## Response Format (CRITICAL)
-
-Respond with a single JSON object only. No markdown fences, no text outside the JSON.
-
-Schema:
-{
-  "reply": "<user-facing message — always required>",
-  "daily_log": null OR {
-    "wins": "...", "challenges": "...", "gratitude": "...", "priorities": "...",
-    "energy_level": 1-10, "focus_rating": 1-10
-  },
-  "memory_update": null OR {
-    "should_update": true/false,
-    "summary_text": "<full updated LTM markdown profile with ## headings>"
-  },
-  "insights": null OR [
-    {"insight_type": "pattern|breakthrough|challenge", "description": "...", "importance_score": 1-5}
-  ]
-}
-
-Rules:
-- "reply" is the only text the user sees. Always include it.
-- Include daily_log only during evening sessions when the user shared reflection content.
-- Include memory_update when meaningful profile changes emerged (typically evening). Set should_update false otherwise.
-- Include insights only for notable patterns or breakthroughs worth storing long-term.
-- Session tracking is handled server-side — never include it in the JSON.
-- When updating memory, maintain sections: Overview & North Star, Key Patterns, Recurring Challenges,
-  Breakthroughs & Wins, Personality Traits, Current State & Momentum (use ## headings).
-"""
-
-GREETING_OUTPUT_INSTRUCTIONS = """
-## Response Format
-
-Respond with plain text only — a warm, concise greeting. Do NOT use JSON. Do NOT describe database actions.
-"""
+# Re-export for backwards-compatible test imports
+_parse_structured_envelope = parse_envelope
 
 _api_request_log_count = 0
 
@@ -345,12 +318,15 @@ async def generate_catalyst_response(
 
     base_prompt_text, base_metadata = _load_base_prompt()
     prompt_timestamp = local_now()
+    context_block = build_context_block(context, session_type, prompt_timestamp)
+    context_meta = context_format_metadata(context_block)
     system_prompt = _build_system_prompt(
         session_type,
         context,
         base_prompt=base_prompt_text,
         generated_at=prompt_timestamp,
         output_mode=output_mode,
+        context_block=context_block,
     )
     try:
         context_snapshot = json.loads(json.dumps(context, default=str))
@@ -365,7 +341,11 @@ async def generate_catalyst_response(
     estimated_tokens = estimate_tokens(system_prompt, message)
 
     response_format: Optional[Dict[str, str]] = None
-    if output_mode == "structured" and primary_model.startswith("gemini-"):
+    if (
+        output_mode == "structured"
+        and primary_model.startswith("gemini-")
+        and ENVELOPE_FORMAT == "json"
+    ):
         response_format = {"type": "json_object"}
 
     response, current_model_used = await _make_api_call_with_retry(
@@ -383,7 +363,7 @@ async def generate_catalyst_response(
     memory_updated = False
 
     if output_mode == "structured":
-        response_text, envelope = _parse_structured_envelope(raw_text)
+        response_text, envelope = parse_envelope(raw_text)
         if not response_text:
             response_text = _derive_fallback_message(response)
         else:
@@ -425,6 +405,7 @@ async def generate_catalyst_response(
         "session_type": session_type.value,
         "generated_at": prompt_timestamp.isoformat(),
         "base": base_metadata,
+        **context_meta,
     }
 
     return result
@@ -626,98 +607,26 @@ def _build_system_prompt(
     base_prompt: Optional[str] = None,
     generated_at: Optional[datetime] = None,
     output_mode: OutputMode = "structured",
+    context_block: Optional[str] = None,
 ) -> str:
     if base_prompt is None:
         base_prompt, _ = _load_base_prompt()
 
     timestamp_source = generated_at or local_now()
+    if context_block is None:
+        context_block = build_context_block(context, session_type, timestamp_source)
 
-    insights_list = context.get("insights") or []
-    recent_conversations = context.get("recent_conversations") or []
-
-    if insights_list:
-        formatted_insights: List[str] = []
-        for insight in insights_list[:6]:
-            description = (insight.get("description") or "").strip()
-            if len(description) > 220:
-                description = description[:217] + "…"
-
-            label_parts: List[str] = []
-            category = insight.get("category")
-            if category:
-                label_parts.append(str(category))
-            insight_type = insight.get("insight_type")
-            if insight_type and insight_type not in label_parts:
-                label_parts.append(str(insight_type))
-            label = " • ".join(label_parts) if label_parts else "Insight"
-
-            date_identified = insight.get("date_identified")
-            if date_identified:
-                formatted_insights.append(
-                    f"- [{label}] ({date_identified}) {description}"
-                )
-            else:
-                formatted_insights.append(f"- [{label}] {description}")
-
-        insights_block = "### Key Insights:\n" + "\n".join(formatted_insights) + "\n\n"
-    else:
-        insights_block = "### Key Insights:\n- No stored insights yet.\n\n"
-
-    recent_block = ""
-    if recent_conversations:
-        excerpts: List[str] = []
-        for entry in recent_conversations[-5:]:
-            timestamp = entry.get("timestamp") or "Recent"
-            user_text = (entry.get("user") or "").strip()
-            catalyst_text = (entry.get("catalyst") or "").strip()
-
-            if len(user_text) > 160:
-                user_text = user_text[:157] + "…"
-            if len(catalyst_text) > 200:
-                catalyst_text = catalyst_text[:197] + "…"
-
-            excerpts.append(
-                f'- {timestamp}: User → "{user_text or "…"}" | Catalyst → "{catalyst_text or "…"}"'
-            )
-
-        recent_block = (
-            "### Recent Conversation Highlights:\n" + "\n".join(excerpts) + "\n\n"
-        )
-
-    prompt = f"{base_prompt}\n\n" + (
-        "## Current Context\n\n"
-        f"### User's Goal Hierarchy:\n{json.dumps(context['goals'], indent=2)}\n\n"
-        f"### User's Long-Term Memory Profile:\n{context['ltm_profile']['full_text']}\n\n"
-        f"### Recent Patterns Identified:\n{context['ltm_profile']['patterns']}\n\n"
-        f"### Current State:\n{context['ltm_profile']['current_state']}\n\n"
-        f"{insights_block}"
-        f"{recent_block}"
-        f"### Session Information:\n- Session Type: {session_type.value}\n"
-        f"- Current Date: {timestamp_source.strftime('%Y-%m-%d')}\n"
-        f"- Missed Sessions: {context.get('missed_sessions', [])}\n\n"
+    prompt = (
+        f"{base_prompt}\n\n{context_block}\n\n"
         f"## Session-Specific Instructions:\n\n{get_session_instructions(session_type)}\n"
     )
 
     if output_mode == "structured":
-        prompt += f"\n{STRUCTURED_OUTPUT_INSTRUCTIONS}\n"
+        prompt += f"\n{format_output_instructions()}\n"
     elif output_mode == "greeting":
         prompt += f"\n{GREETING_OUTPUT_INSTRUCTIONS}\n"
 
     return prompt
-
-
-def _parse_structured_envelope(raw_text: str) -> Tuple[str, Dict[str, Any]]:
-    """Parse a structured JSON response; fall back to plain text as reply."""
-    text = _strip_code_fences(raw_text)
-    try:
-        data = json.loads(text)
-        if isinstance(data, dict):
-            reply = (data.get("reply") or "").strip()
-            return reply or raw_text.strip(), data
-    except json.JSONDecodeError:
-        pass
-    stripped = raw_text.strip()
-    return stripped, {"reply": stripped}
 
 
 def _greeting_fallback(context: Dict[str, Any], session_type: SessionType) -> str:
